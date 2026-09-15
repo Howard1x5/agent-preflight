@@ -1,0 +1,20 @@
+# secrets
+.env
+.env.*
+*.token
+*.pem
+*.key
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# local state / logs
+*.log
+state/
+scratch/
+.DS_Store
