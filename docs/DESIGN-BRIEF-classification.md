@@ -8,6 +8,47 @@ evidence, the candidate approaches and their trade-offs. It deliberately does
 
 ---
 
+## Before you read the code — a known mismatch
+
+The documentation describes a general-purpose diligence gate. **The code does
+not yet match it.** `preflight_gate.py` is the original implementation,
+extracted verbatim from a personal memory system, and it is still specific to
+that system: `OB_PATTERNS`, `classify_ob_query()`, hardcoded references to one
+backend.
+
+This is deliberate. Generalising the classifier *is* the decision this brief
+asks for, so the code was not pre-emptively rewritten into a shape that
+presumes an answer. Read the memory-system specifics as **one concrete instance
+of the general problem**, not as the intended scope.
+
+Every defect below is a property of the *approach*, not of the domain.
+
+## Reproducing the defects
+
+The claims in this brief are executable:
+
+```bash
+pytest tests/ -v
+```
+
+Four tests are marked `xfail(strict=True)` — they reproduce the defects below
+against the current implementation, and will error if a defect is ever fixed
+without updating them. Three further tests cover behaviour that is currently
+correct and must stay correct.
+
+```
+XFAIL  test_local_memory_read_must_not_satisfy_backend_requirement
+XFAIL  test_real_backend_query_must_not_be_blocked_for_naming
+XFAIL  test_echo_must_not_satisfy_the_gate
+XFAIL  test_echoed_sql_keywords_must_not_satisfy_the_gate
+PASS   test_generic_dump_is_not_targeted
+PASS   test_write_does_not_satisfy_a_read_requirement
+PASS   test_unrelated_command_is_not_classified
+```
+
+Whatever replaces the classifier must turn the four `xfail`s green **without**
+breaking the three that pass.
+
 ## The job classification does
 
 Given a single tool call, decide which of four things it is:
