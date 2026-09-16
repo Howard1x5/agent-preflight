@@ -51,6 +51,21 @@ technically satisfies "did you query" while defeating the purpose.
 **Generalises to:** read-before-edit, test-before-claiming-success,
 schema-check-before-migration. The rule differs; the shape does not.
 
+**Amended 2026-09-16 — the claim was too strong.** Incident 4 measured what
+this control can actually establish. "Enforces whether the work was done
+properly" is not defensible: targetedness is a quality judgment, and any
+mechanical test for it becomes a new proxy to game. What is defensible after
+D5 is narrower and split in two:
+
+| | claim |
+|---|---|
+| **gated** | a live backend round-trip occurred this turn, established from the response |
+| **measured** | whether that contact was substantive — reported, never blocked on |
+
+The distinction from an allowlist survives this, and in fact sharpens: an
+allowlist cannot detect its own rubber-stamping. The record produced here can,
+and did.
+
 ---
 
 ## D3 — Three outcomes
@@ -88,6 +103,14 @@ entire period. Conflating "the agent skipped a step" with "the control plane is
 down" makes the tool unusable in exactly the conditions where it needs to
 degrade gracefully.
 
+**Amended 2026-09-16 — degraded cannot be a steady state.** The table above
+says "warn loudly, log as degraded, allow." Incident 4 measured what happens
+when the warning is absent and the allowance is unbounded: eight consecutive
+days, zero successful backend queries, forty gate satisfactions, success
+reported every turn. Degraded operation must be **time-bounded and escalating**
+— N consecutive verified failures move the session to a state that blocks or
+demands acknowledgement, rather than one it can sit in for a week.
+
 **Why dev mode must be loud and session-scoped:** the original failure this
 project exists to prevent is *silent* degradation — the gate holding open while
 the backend was disconnected, discovered only by accident. A persistent config
@@ -108,22 +131,70 @@ command strings, URLs and tool names.
 - Patterns are hardcoded to one environment (host names, endpoints), so the
   tool is not portable without editing source
 
-**Not yet decided:** what replaces it. Candidate directions include structured
-declaration of intent by the caller, parsing rather than matching, and
-rule definitions as data rather than code. **This is the next design decision
-and it is deliberately left open** rather than settled prematurely.
+**Decided 2026-09-16.** Settled by two independent frontier-model reviews from
+identical inputs, plus analysis of 809 audit records (`INCIDENTS.md`,
+Incident 4). Recorded in `DESIGN-BRIEF-classification.md` and
+`DESIGN-BRIEF-premise.md`.
+
+1. **Verification moves after execution.** `PreToolUse` admits candidates and
+   blocks non-candidates; `PostToolUse` flips satisfaction, and only on a
+   **non-error** result. Non-error, not non-empty — a targeted search that
+   correctly returns zero rows is diligence, not a failure.
+2. **The local-read substitute is removed.** No local file read satisfies a
+   live-backend requirement. With no substitute available, an unreachable
+   backend blocks, and the block is the outage alert. This single change
+   addresses Incidents 1 and 4 together.
+3. **Gate state leaves `/tmp`.** The current file is named for the session and
+   writable by the gated agent, which has shell access and knows its own
+   session id. It can open the gate by writing to that file, or by deleting it,
+   since a missing file fails open. Satisfaction must be recorded where the
+   gated agent cannot write.
+4. **Rules become data.** Per-requirement configured clients and endpoints,
+   not patterns hardcoded in source.
+5. **Liveness leaves the hot path.** Inferred from `PostToolUse` outcomes — N
+   consecutive verified failures move the session to the D4 degraded state —
+   not probed before every tool call.
+6. **Shell is admitted only by parsing.** A single simple command whose
+   `argv[0]` is a configured client, established with a real parse rather than
+   by denylisting metacharacters. A denylist over raw command text is the same
+   unsound control this decision exists to remove. Everything else goes through
+   a shipped wrapper that is itself a recognised client.
+
+**Rejected — enforcing on claims rather than tool calls.** Appealing, because
+the real concern is an unverified assertion rather than a tool call. Rejected on
+two independent grounds: the enforcement point is not reliably reachable in a
+pre-tool hook contract, and "asserted a fact it had not verified" requires an
+LLM judge whose own cheapest satisfying action is to make no checkable claims —
+a worse outcome than the problem.
+
+**Portability note:** step 1 requires `PostToolUse` to carry the tool result.
+Confirmed present in Claude Code's hook payload (`tool_response`). Unverified
+elsewhere — see `TODO.md` T2.
 
 ---
 
-## D6 — Audit log
+## D6 — The audit log is the product, not a byproduct
 
-**Current state:** plain local file.
+**Superseded 2026-09-16.** This was previously recorded as a deferred gap — a
+plain local file, with structured export listed as future work.
 
-**Known gap:** competitors emit OpenTelemetry (`mcp-policy-gateway`) or index
-sessions (`entire/cli`). Structured, exportable output is required before this
-is useful to anyone operating it at scale.
+**Decision:** the per-decision record is the project's distinctive output, and
+enforcement is the instrument that generates it.
 
-**Deferred**, not dismissed.
+**Why:** Incident 4 was not found by the gate. It was found by reading the
+gate's log, which held enough per-decision detail to establish what satisfied
+the control, how large each satisfying read was, and how that distribution moved
+against backend availability. The finding overturned the maintainer's own
+stated diagnosis. Neither an allowlist nor a classifier can produce that; both
+are blind to their own rubber-stamping.
+
+**Condition — Incident 3 is the specification.** This log existed for 162 days
+and nobody read it. "Ship the log" without re-surfacing reproduces exactly the
+failure this project documents as Incident 3. A per-session drift rate must be
+pushed at the operator — at session end and in the block message — and a
+threshold must turn the metric into an alert. Storage is not follow-up.
+
+**Still deferred:** structured export (OpenTelemetry, session indexing).
 
 ---
 

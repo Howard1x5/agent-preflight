@@ -23,9 +23,12 @@ turn. Over a long session that compounds into a real, unmeasured cost.
 block messages, and report cost per session. Enforcement that is too expensive
 will simply be switched off, which is the same outcome as having no control.
 
-Relevant to the D5 decision: approach B (narrow the satisfying surface) is
-likely cheaper than approach A (parse everything), because a structured
-call is smaller than an ad-hoc query and its result set.
+**Now more relevant, not less.** D5 was decided on 2026-09-16 in favour of a
+narrowed satisfying surface plus post-execution verification. That removes the
+local-read escape hatch, so a turn that previously satisfied the gate with a
+3-line file read will now perform a real backend query. Enforcement cost goes
+**up**, and it has never been measured. A control that is too expensive gets
+switched off, which is the same outcome as having no control.
 
 ---
 

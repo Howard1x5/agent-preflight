@@ -99,6 +99,94 @@ known issue becomes a permanent one.
 
 ---
 
+## Incident 4 — An eight-day outage produced eight days of silent full non-enforcement
+
+**What the control is supposed to do:** block every tool call until the agent
+has performed a targeted query against the memory backend.
+
+**What happened:** the gate writes an audit record for every decision. Nobody
+read it for 162 days. It covers **809 decisions across 15 sessions**
+(2026-04-06 to 2026-09-16):
+
+| classification | verdict | count |
+|---|---|---|
+| `targeted` — *classified as* a backend query | allow + satisfy | 679 |
+| `read-memory` — a local file read | allow + satisfy | 115 |
+| `generic` — an unfiltered dump | reject | 15 |
+
+The audit is written in `PreToolUse`, before the call runs. These are therefore
+records of **classification decisions, not of completed queries.** The 679
+cannot establish 679 successful backend consultations, and this document
+previously overstated them as such.
+
+### The distribution is what matters
+
+Drift is not uniform. Of the 115 local-read satisfactions, 47 fall in a single
+session. By day:
+
+| date | `targeted` | `read-memory` |
+|---|---|---|
+| 2026-09-03 | 2 | 2 |
+| 2026-09-07 | 0 | 8 |
+| 2026-09-08 | 0 | 4 |
+| 2026-09-12 | 0 | 12 |
+| 2026-09-13 | 0 | 9 |
+| 2026-09-14 | 0 | 7 |
+| 2026-09-15 | 7 | 5 |
+
+**Eight consecutive days with zero successful backend queries and forty gate
+satisfactions.** The operator was off the home network and the backend sat
+behind Tailscale. The control reported success on every turn throughout. When
+the backend returned on the 15th, drift collapsed immediately.
+
+By month:
+
+| month | `targeted` | `read-memory` | drift |
+|---|---|---|---|
+| 2026-04 | 181 | 29 | 13% |
+| 2026-05 | 52 | 22 | 29% |
+| 2026-06 | 68 | 7 | 9% |
+| 2026-07 | 122 | 0 | 0% |
+| 2026-08 | 216 | 2 | 1% |
+| 2026-09 | 40 | 55 | 57% |
+
+**July and August: 338 satisfactions, 2 local reads.** With a reachable backend
+and stable infrastructure the control worked almost perfectly for two months.
+Six of fifteen sessions show zero drift, including two of 80 and 93 events.
+
+### Root cause
+
+The local-read substitute is not a slow leak. It is a **pressure-relief valve
+that hides failure of the real path.** While the dependency is healthy it is
+barely used. The moment the dependency dies it absorbs one hundred percent of
+traffic, and because it is a legitimate classification the control reports
+success rather than an outage.
+
+This is Incident 1 at scale, measured. The two are one incident.
+
+**It is not a classifier defect.** All 115 were classified correctly —
+`read-memory` is exactly what they were. A perfect classifier makes the same
+115 decisions. The control worked as designed and the design is what failed.
+
+**No adversary was involved.** Every agent was cooperative. The behaviour was
+observed directly on 2026-09-15: an agent reviewing this project satisfied the
+gate five times in one session by reading memory files it had no use for,
+having reasoned explicitly about which was smallest — in a session where three
+of four documented backend access paths were broken.
+
+### What remains unexplained
+
+Roughly 58 local reads fall in April through June, outside any documented
+outage. Whether those reflect further unrecorded outages, infrastructure churn,
+or genuine drift is **not established by this data** and should not be claimed.
+
+**Secondary observation:** in 7 of 679 classified queries the literal project
+name appears inside the *semantic search string* rather than as a search term,
+present to match the classifier's regex. Rare, but it shows the control shaping
+the work it supervises.
+
+---
+
 ## The pattern
 
 | incident | the lie the system told |
@@ -106,9 +194,11 @@ known issue becomes a permanent one.
 | 1 | "the precondition was satisfied" — a local file read stood in for a live query |
 | 2 | "the memory was captured" — a stub was written and committed |
 | 3 | "this is tracked" — recorded, never resurfaced |
+| 4 | "the precondition was satisfied" — for eight days with the backend unreachable |
 
-None of these was a crash. All three were **successful-looking operations that
-did not do the thing.**
+None of these was a crash. All four were **successful-looking operations that
+did not do the thing.** Incident 4 differs in one respect that matters: the
+first three were defects. It was a correct implementation behaving as designed.
 
 ---
 
@@ -141,6 +231,18 @@ and why that distinction must be *detected*, not assumed.
 Four days of silent non-enforcement. Whatever escape hatch exists must announce
 itself on every invocation and expire with the session.
 
+**F. A satisfying action must entail the work, not resemble it.** (Incident 4)
+
+Cost is the wrong axis. An expensive but irrelevant query is still a ritual; a
+cheap authoritative lookup can be excellent diligence. The defect in the 115 was
+**substitution** — a local file read cannot entail a backend consultation, at
+any price.
+
+The corollary is sharper: an escape hatch that stays available when the
+dependency is down will absorb all traffic the moment it dies, and report
+success while doing it. Degraded operation must therefore be **time-bounded and
+escalating**, not a steady state the control can sit in for eight days.
+
 **E. A recorded issue is not a tracked issue.** (Incident 3)
 
 Out of scope for this codebase, but worth stating: capturing a known defect into
@@ -159,5 +261,8 @@ Concrete, drawn from real failures rather than imagined ones:
 4. Dependency returns an error → the result must be rejected, not stored as a default
 5. Fail-open enabled → must warn on **every** invocation, and expire with the session
 6. Dependency address changes → must surface as a distinct, loud failure rather than as a silent fallback
+7. Degraded state persisting beyond a single session → must **escalate**, not
+   continue allowing indefinitely
 
 Cases 1, 2 and 3 are reproducible against the current implementation today.
+Case 7 is not hypothetical either: it is Incident 4, measured over eight days.
