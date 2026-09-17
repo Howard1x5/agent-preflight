@@ -28,7 +28,15 @@ def _load_gate():
 
 
 gate = _load_gate()
-classify = gate.classify
+sys.path.insert(0, str(GATE_PATH.parent))
+import rules as R  # noqa: E402
+
+RULE = R.load_rule("consult-backend")
+EP = "memory-backend.example"
+
+
+def classify(tool, inp):
+    return R.classify(tool, inp, RULE)
 
 
 # --------------------------------------------------------------------------
@@ -56,12 +64,16 @@ def test_local_memory_read_must_not_satisfy_backend_requirement():
 # Incident 1 (compounding) — a legitimate backend query is blocked
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(reason="INCIDENT-1b: real backend query blocked for lacking a literal substring", strict=True)
 def test_real_backend_query_must_not_be_blocked_for_naming():
-    """A genuine API query should satisfy the gate regardless of URL wording.
+    """A genuine API query qualifies regardless of URL wording.
 
     Observed: a POST to /api/search was blocked because the command text did
     not contain the literal string "open-brain".
+
+    Fixed in v4 by rules-as-data: the rule declares its endpoint, and matching
+    is against that rather than against a project name appearing in command
+    text. This also removed the pressure that had agents injecting that name
+    into semantic search strings so the gate would open.
     """
     cmd = ("curl -s -X POST http://memory-backend.example/api/search "
            "-H 'Content-Type: application/json' "
@@ -92,9 +104,13 @@ def test_echo_must_not_satisfy_the_gate():
     )
 
 
-@pytest.mark.xfail(reason="SPOOF: echoing SQL keywords opens the gate", strict=True)
 def test_echoed_sql_keywords_must_not_satisfy_the_gate():
-    """Filter keywords in arbitrary text are not a filtered query."""
+    """Filter keywords in arbitrary text are not a filtered query.
+
+    Fixed in v4: `echo` is not a configured client, so the command is never
+    interpreted. Filtering is judged on the arguments of an admitted client
+    invocation, never on raw shell text.
+    """
     result = classify("Bash", {"command": "echo 'open-brain WHERE ILIKE'"})
     assert result != "targeted", (
         "echoing SQL keywords satisfies the gate without any query executing"
@@ -107,7 +123,8 @@ def test_echoed_sql_keywords_must_not_satisfy_the_gate():
 
 def test_generic_dump_is_not_targeted():
     """A query with no filtering must not satisfy the gate."""
-    cmd = "psql -c 'SELECT * FROM memories ORDER BY created_at DESC LIMIT 10' open-brain"
+    cmd = ("psql -c 'SELECT * FROM memories ORDER BY created_at DESC LIMIT 10' "
+           "memory-backend.example")
     assert classify("Bash", {"command": cmd}) == "generic"
 
 
@@ -138,13 +155,16 @@ def test_no_classification_accepts_a_local_read():
         assert classify(tool, inp) is None, f"{tool} {inp} must not satisfy"
 
 
+ALL_MESSAGES = (gate.MSG_BLOCKED, gate.MSG_GENERIC, gate.MSG_COMPOUND, gate.MSG_RETRY)
+
+
 def test_messages_never_name_a_non_performing_action():
     """The block message must not offer an action that does no work.
 
     Incident 4: the v2 message listed "Read local memory files" as method 2 of
     3. It was the cheapest listed method, so agents took it -- 115 times.
     """
-    for msg in (gate.MSG_BLOCKED, gate.MSG_GENERIC):
+    for msg in ALL_MESSAGES:
         low = msg.lower()
         assert "read local memory" not in low
         assert "memory/*.md" not in low
@@ -158,7 +178,7 @@ def test_messages_contain_no_worked_example():
     `WHERE summary ILIKE '%keyword_from_user_request%'` -- the same defect as
     the block message, in a second place.
     """
-    for msg in (gate.MSG_BLOCKED, gate.MSG_GENERIC):
+    for msg in ALL_MESSAGES:
         assert "example:" not in msg.lower()
         assert "ILIKE '%" not in msg
         assert "SELECT " not in msg
@@ -168,8 +188,7 @@ def test_every_message_is_versioned_into_records():
     """Message text is load-bearing, so it must be attributable in the data."""
     assert gate.MESSAGE_VERSION
     import hashlib
-    expected = hashlib.sha256(
-        (gate.MSG_BLOCKED + gate.MSG_GENERIC).encode()).hexdigest()[:8]
+    expected = hashlib.sha256("".join(ALL_MESSAGES).encode()).hexdigest()[:8]
     assert gate.MESSAGE_VERSION == expected, (
         "MESSAGE_VERSION must be derived from the live message text, or a "
         "message-induced behaviour change cannot be attributed to the message"

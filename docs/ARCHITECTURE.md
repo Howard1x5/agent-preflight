@@ -131,7 +131,7 @@ command strings, URLs and tool names.
 - Patterns are hardcoded to one environment (host names, endpoints), so the
   tool is not portable without editing source
 
-**Decided 2026-09-16.** Settled by two independent frontier-model reviews from
+**Decided 2026-09-16. Implemented 2026-09-17 (v3, v4).** Settled by two independent frontier-model reviews from
 identical inputs, plus analysis of 809 audit records (`INCIDENTS.md`,
 Incident 4). Recorded in `DESIGN-BRIEF-classification.md` and
 `DESIGN-BRIEF-premise.md`.
@@ -188,6 +188,19 @@ a worse outcome than the problem.
 **Portability note:** step 1 requires `PostToolUse` to carry the tool result.
 Confirmed present in Claude Code's hook payload (`tool_response`). Unverified
 elsewhere — see `TODO.md` T2.
+
+**Implementation note on step 6 — why a parse and not a denylist.** The
+tokenizer was probed before the parser was built, and it does not surface two
+constructs: a newline is consumed as whitespace, so `curl <configured
+endpoint>` followed by a second command on the next line tokenizes as one flat
+list and no operator token ever appears; and a backtick stays glued inside a
+word. A check that only looked for operator tokens would admit both while
+`argv[0]` read as a configured client. The parser therefore combines the
+structural token check with a raw-string check for exactly those constructs,
+and the refusal is an allowlist: a single simple command whose `argv[0]` is a
+configured client, anything else unrelated. `tests/test_shell_admission.py`
+pins thirteen compound forms, each beginning with a real client hitting the
+real endpoint.
 
 ---
 
