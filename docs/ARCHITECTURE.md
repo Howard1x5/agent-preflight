@@ -145,14 +145,28 @@ Incident 4). Recorded in `DESIGN-BRIEF-classification.md` and
    the message the gate returns must stop listing it as an approved method. The
    message is the root cause of Incident 4: it advertised the bypass on every
    block. Fixing `classify()` alone leaves the control instructing agents to do
-   something that now gets them blocked. With no substitute available, an unreachable
-   backend blocks, and the block is the outage alert. This single change
+   something that now gets them blocked. With no substitute available, an
+   unreachable backend can no longer be papered over. This single change
    addresses Incidents 1 and 4 together.
-3. **Gate state leaves `/tmp`.** The current file is named for the session and
-   writable by the gated agent, which has shell access and knows its own
-   session id. It can open the gate by writing to that file, or by deleting it,
-   since a missing file fails open. Satisfaction must be recorded where the
-   gated agent cannot write.
+
+   **Reconciling with D4.** D4 says unreachable degrades to allow; taken
+   literally with the sentence above it, the two contradict. Resolution:
+   consecutive verified failures 1-3 **block** with a retry message; from the
+   fourth the session enters D4's degraded state, which warns on every
+   invocation and is bounded per D4's amendment. Failure never silently counts
+   as satisfaction.
+3. **Gate state leaves `/tmp`, and missing state fails closed.** The current
+   file is named for the session and writable by the gated agent, which has
+   shell access and knows its own session id. It can open the gate by writing
+   to that file, or by deleting it, since a missing file currently fails open.
+
+   **What is actually achievable, stated honestly:** the hook and the agent's
+   shell run as the same uid, so there is no filesystem boundary between them.
+   "Where the gated agent cannot write" is not reachable without a separate uid
+   or a privileged helper. The achievable property is **not trivially
+   writable** — an unguessable location, and missing state failing closed so
+   deletion cannot open the gate. This remains a cooperative-agent boundary,
+   which is D1's stated scope, and the README must not imply otherwise.
 4. **Rules become data.** Per-requirement configured clients and endpoints,
    not patterns hardcoded in source.
 5. **Liveness leaves the hot path.** Inferred from `PostToolUse` outcomes — N

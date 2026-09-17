@@ -110,14 +110,24 @@ read it for 162 days. It covers **809 decisions across 15 sessions**
 
 | classification | verdict | count |
 |---|---|---|
-| `targeted` — *classified as* a backend query | allow + satisfy | 679 |
+| `targeted` — *classified as* a backend query | allow + satisfy | 690 |
 | `read-memory` — a local file read | allow + satisfy | 115 |
 | `generic` — an unfiltered dump | reject | 15 |
 
-The audit is written in `PreToolUse`, before the call runs. These are therefore
-records of **classification decisions, not of completed queries.** The 679
-cannot establish 679 successful backend consultations, and this document
-previously overstated them as such.
+Two limits on this denominator, both of which this document previously
+overstated:
+
+**These are classification decisions, not completed queries.** The audit is
+written in `PreToolUse`, before the call runs. The 679 cannot establish 679
+successful backend consultations.
+
+**Not every enforcement decision is audited at all.** Only three code paths call
+`audit()`. An ordinary block (`preflight_gate.py:245`) and an already-satisfied
+allow (`:197`) write a plain log line and exit without a record. So 820 is the
+count of *classified* decisions, and 115/805 is the share of recorded
+*satisfaction* classifications. Neither is an all-turn failure rate, and the
+absence of classified queries during the outage does not by itself prove no
+backend call happened anywhere.
 
 ### The distribution is what matters
 
@@ -148,7 +158,7 @@ By month:
 | 2026-06 | 68 | 7 | 9% |
 | 2026-07 | 122 | 0 | 0% |
 | 2026-08 | 216 | 2 | 1% |
-| 2026-09 | 40 | 55 | 57% |
+| 2026-09 | 51 | 55 | 52% |
 
 **July and August: 338 satisfactions, 2 local reads.** With a reachable backend
 and stable infrastructure the control worked almost perfectly for two months.
@@ -206,7 +216,7 @@ Roughly 58 local reads fall in April through June, outside any documented
 outage. Whether those reflect further unrecorded outages, infrastructure churn,
 or genuine drift is **not established by this data** and should not be claimed.
 
-**Secondary observation:** in 7 of 679 classified queries the literal project
+**Secondary observation:** in a small number of classified queries the literal project
 name appears inside the *semantic search string* rather than as a search term,
 present to match the classifier's regex. Rare, but it shows the control shaping
 the work it supervises.

@@ -160,4 +160,4 @@ catches, not the boundary it operates on.
 
 ## License
 
-TBD
+MIT. See [LICENSE](LICENSE).
