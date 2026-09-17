@@ -110,7 +110,7 @@ read it for 162 days. It covers **809 decisions across 15 sessions**
 
 | classification | verdict | count |
 |---|---|---|
-| `targeted` — *classified as* a backend query | allow + satisfy | 690 |
+| `targeted` — *classified as* a backend query | allow + satisfy | 689 |
 | `read-memory` — a local file read | allow + satisfy | 115 |
 | `generic` — an unfiltered dump | reject | 15 |
 
@@ -123,8 +123,8 @@ successful backend consultations.
 
 **Not every enforcement decision is audited at all.** Only three code paths call
 `audit()`. An ordinary block (`preflight_gate.py:245`) and an already-satisfied
-allow (`:197`) write a plain log line and exit without a record. So 820 is the
-count of *classified* decisions, and 115/805 is the share of recorded
+allow (`:197`) write a plain log line and exit without a record. So 819 is the
+count of *classified* decisions, and 115/804 is the share of recorded
 *satisfaction* classifications. Neither is an all-turn failure rate, and the
 absence of classified queries during the outage does not by itself prove no
 backend call happened anywhere.
@@ -158,7 +158,7 @@ By month:
 | 2026-06 | 68 | 7 | 9% |
 | 2026-07 | 122 | 0 | 0% |
 | 2026-08 | 216 | 2 | 1% |
-| 2026-09 | 51 | 55 | 52% |
+| 2026-09 | 50 | 55 | 52% |
 
 **July and August: 338 satisfactions, 2 local reads.** With a reachable backend
 and stable infrastructure the control worked almost perfectly for two months.

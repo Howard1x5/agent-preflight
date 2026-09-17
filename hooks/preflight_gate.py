@@ -1,182 +1,251 @@
 #!/usr/bin/env python3
 """
-Open Brain Gate — PreToolUse hook (v2).
+agent-preflight gate (v3).
 
-Blocks tool calls until the assistant has queried Open Brain this turn.
+Blocks tool calls until a required prerequisite has been performed this turn.
+The reference rule is "consult the configured memory backend before acting."
 
-v2 changes:
-  - TARGETED QUERY ENFORCEMENT: Generic queries (no WHERE/ILIKE/search terms)
-    are rejected. You can't rubber-stamp the gate with ORDER BY LIMIT N.
-  - AUDIT LOGGING: Every OB query attempt (accepted or rejected) is logged
-    to ob-audit.log as JSON-lines for spot-checking.
-  - CAPTURE-ONLY: add_memory / api/add calls are allowed but don't satisfy
-    the gate — you still need to search before doing other work.
+WHAT CHANGED IN v3, AND WHY
 
-Flow:
-  1. Read flag file /tmp/claude-ob-gate-{session_id}
-  2. If 'satisfied' -> allow
-  3. If 'pending':
-     a. Classify the tool call:
-        - None (not OB-related) -> BLOCK (must query OB first)
-        - "targeted"    -> ALLOW, flip to satisfied
-        - "read-memory" -> ALLOW, flip to satisfied
-        - "generic"     -> BLOCK with "add search terms" message
-        - "capture-only"-> ALLOW but do NOT flip gate
-  4. No flag file -> fail-open (avoid bricking sessions)
-  NO SKIP SENTINEL. Every turn must query Open Brain. No exceptions.
+v2 accepted a read of a *local* file as satisfying a *live backend*
+requirement, and its block message listed that read as an approved method.
+Over 162 days that substitute absorbed 115 of 805 recorded satisfactions --
+100% of them during an eight-day backend outage, while the gate reported
+success on every turn. See docs/INCIDENTS.md Incident 4; the pre-intervention
+dataset is committed at data/before-2026-09-16.jsonl.
 
-Output protocol (PreToolUse):
-  Exit 0 + stdout "" -> allow
-  Exit 2 + stderr message -> block (shown to assistant)
+  1. No local read satisfies a live-backend requirement. The classifier no
+     longer returns "read-memory", and the block message no longer names it.
+  2. Messages do not contain example queries. A worked example is a copyable
+     minimal satisfying shape -- the same defect as (1) in a second place.
+  3. Every decision produces a content-free record, including ordinary blocks
+     and already-satisfied allows. v2 recorded only three of five paths, so its
+     denominator excluded the decisions it was least likely to be right about.
+  4. Gate state lives outside /tmp under an unguessable name, and missing state
+     FAILS CLOSED. v2 failed open, so deleting one predictable file disabled
+     enforcement silently.
+
+NOT YET IMPLEMENTED (ARCHITECTURE.md D5): post-execution confirmation does not
+yet flip satisfaction. The PostToolUse phase records results only. Until that
+lands, a "targeted" classification still means an inspected *request*, not a
+verified *consultation* -- the exact gap that made v2's 679 targeted
+classifications unconfirmable.
+
+Output protocol:
+  Exit 0            -> allow
+  Exit 2 + stderr   -> block (message returned to the agent)
 
 Setup:
-  1. Add to ~/.claude/settings.json under hooks.PreToolUse (matcher: "")
-  2. Customize OB_PATTERNS to match your Open Brain access methods
-  3. Customize the BLOCK message with your actual connection details
+  1. Register for PreToolUse and PostToolUse in ~/.claude/settings.json
+  2. Set PREFLIGHT_RULE below for your backend
 """
 
+import hashlib
 import json
-import os
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 
-GATE_DIR = Path("/tmp")
-GATE_PREFIX = "claude-ob-gate-"
-PROMPT_PREFIX = "claude-ob-prompt-"
-LOG_FILE = Path.home() / ".claude" / "hooks" / "ob-gate.log"
-AUDIT_FILE = Path.home() / ".claude" / "hooks" / "ob-audit.log"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import records  # noqa: E402
+
+MODE = "enforce"            # "observe" records without blocking
 
 # ---------------------------------------------------------------------------
-# Patterns that indicate an Open Brain query or capture
-# Customize these for your setup (SSH hosts, DB IPs, API endpoints, etc.)
+# Rule definition. Rules become data (D5.4); this is the one shipped rule.
 # ---------------------------------------------------------------------------
-OB_PATTERNS = [
-    r"open[-_ ]brain",                          # Any reference to "open brain"
-    r"search_brain|list_recent|add_memory",     # MCP tool names
-    # Add your own patterns here, e.g.:
-    # r"your-ob-host\.example\.com",
-    # r"your\.db\.ip\.address",
-]
-OB_REGEX = re.compile("|".join(OB_PATTERNS), re.IGNORECASE)
+PREFLIGHT_RULE = {
+    "rule_id": "consult-backend",
+    "rule_kind": "consult-backend",
+    # Text that identifies a call as addressing the required dependency.
+    "identifiers": [
+        r"open[-_ ]brain",
+        r"search_brain|list_recent|add_memory",
+    ],
+    # Evidence that a query actually filters rather than dumping.
+    "filters": [
+        r"\bWHERE\b", r"\bILIKE\b", r"\bLIKE\b", r"\bSIMILAR\s+TO\b",
+        r"\b@@\b", r"\bts_query\b", r"\bsimilarity\b", r"\bto_tsvector\b",
+        r"information_schema",
+    ],
+    "capture_markers": [r"api/add", r"add_memory"],
+}
+
+IDENT_RE = re.compile("|".join(PREFLIGHT_RULE["identifiers"]), re.I)
+FILTER_RE = re.compile("|".join(PREFLIGHT_RULE["filters"]), re.I)
+CAPTURE_RE = re.compile("|".join(PREFLIGHT_RULE["capture_markers"]), re.I)
+
+RULE_CONFIG_HASH = hashlib.sha256(
+    json.dumps(PREFLIGHT_RULE, sort_keys=True).encode()).hexdigest()[:8]
 
 # ---------------------------------------------------------------------------
-# SQL patterns that indicate actual filtering (not a generic dump)
+# Agent-facing messages.
+#
+# These are load-bearing. Incident 4's root cause was message text, so every
+# message is hashed into each record via MESSAGE_VERSION -- without that, a
+# future message-induced behaviour change cannot be attributed to the message.
+#
+# RULE: state the requirement and name the configured methods. Never include a
+# worked example, and never name an action that does not perform the work.
 # ---------------------------------------------------------------------------
-FILTER_PATTERNS = [
-    r"\bWHERE\b",
-    r"\bILIKE\b",
-    r"\bLIKE\b",
-    r"\bSIMILAR\s+TO\b",
-    r"\b@@\b",              # Full-text search operator
-    r"\bts_query\b",
-    r"\bsimilarity\b",
-    r"\bto_tsvector\b",
-    r"information_schema",  # Schema introspection is legitimate
-]
-FILTER_REGEX = re.compile("|".join(FILTER_PATTERNS), re.IGNORECASE)
+MSG_BLOCKED = (
+    "PREFLIGHT GATE: this turn has not yet consulted the required backend.\n\n"
+    "Satisfy it with a filtered query to the configured backend, through one of\n"
+    "the configured clients. A query must carry search terms drawn from what the\n"
+    "user actually asked.\n\n"
+    "Reading a local file does not satisfy this requirement. Neither does\n"
+    "printing text that mentions the backend. The work has to happen."
+)
+
+MSG_GENERIC = (
+    "PREFLIGHT GATE: query rejected -- no filtering.\n\n"
+    "The query reached the backend but retrieves whatever is most recent rather\n"
+    "than what the user asked about. Add search terms drawn from the request.\n\n"
+    "A filtered query that legitimately returns zero rows does satisfy this\n"
+    "gate. Finding nothing is a result; not looking is not."
+)
+
+MESSAGE_VERSION = hashlib.sha256(
+    (MSG_BLOCKED + MSG_GENERIC).encode()).hexdigest()[:8]
 
 
-# ===== Helpers =============================================================
+# ===== State ===============================================================
+# D5.3: outside /tmp, unguessable, missing state fails closed.
+#
+# Honest limit: the hook and the agent's shell run as the same uid, so this is
+# "not trivially writable", not "unwritable". A hard boundary needs a separate
+# uid or a privileged helper. See ARCHITECTURE.md D1 and D5.
 
-def log(msg: str):
-    try:
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with LOG_FILE.open("a") as f:
-            f.write(f"[{datetime.now().isoformat()}] {msg}\n")
-    except Exception:
-        pass
-
-
-def audit(session_id: str, tool_name: str, tool_input: dict,
-          classification: str, verdict: str):
-    """Write JSON-lines audit entry to ob-audit.log."""
-    try:
-        prompt_file = GATE_DIR / f"{PROMPT_PREFIX}{session_id}"
-        prompt = "(unavailable)"
-        if prompt_file.exists():
-            prompt = prompt_file.read_text()[:200]
-
-        if tool_name == "Bash":
-            query = tool_input.get("command", "")[:300]
-        elif tool_name == "WebFetch":
-            query = tool_input.get("url", "")[:300]
-        else:
-            query = json.dumps(tool_input)[:300]
-
-        entry = {
-            "ts": datetime.now().isoformat(),
-            "session": session_id[:16],
-            "tool": tool_name,
-            "classification": classification,
-            "verdict": verdict,
-            "prompt": prompt,
-            "query": query,
-        }
-        AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with AUDIT_FILE.open("a") as f:
-            f.write(json.dumps(entry) + "\n")
-    except Exception:
-        pass
+def gate_path(session_id: str) -> Path:
+    secret = records.install_secret()
+    name = hashlib.sha256((secret + "gate" + (session_id or "")).encode()).hexdigest()[:32]
+    return records.STATE_DIR / f"{name}.state"
 
 
-def classify_ob_query(tool_name: str, tool_input: dict):
+# ===== Classification ======================================================
+
+def classify(tool_name: str, tool_input: dict):
+    """Classify a call against the rule.
+
+      "targeted"     -- addresses the dependency with real filtering
+      "generic"      -- addresses the dependency without filtering
+      "capture-only" -- writes to the dependency; does not satisfy a read
+      None           -- unrelated to the rule
+
+    Note what is absent: there is no classification for reading a local file.
+    A local read cannot entail a live consultation at any price, so it is not a
+    weaker form of satisfaction -- it is simply unrelated (Incident 4,
+    requirement F).
     """
-    Classify an OB-related tool call.
-
-    Returns one of:
-      "targeted"     — query with real search/filter criteria
-      "generic"      — query without filtering (ORDER BY LIMIT only)
-      "read-memory"  — reading local memory files (inherently targeted)
-      "capture-only" — add_memory / api/add (writing, not searching)
-      None           — not OB-related at all
-    """
-    # --- Bash commands ---
     if tool_name == "Bash":
-        cmd = tool_input.get("command", "")
-        if not OB_REGEX.search(cmd):
+        cmd = (tool_input or {}).get("command", "")
+        if not IDENT_RE.search(cmd):
             return None
-        # Has actual SQL filtering?
-        if FILTER_REGEX.search(cmd):
-            return "targeted"
-        # search_brain invocation in a bash command
-        if "search_brain" in cmd:
-            return "targeted"
-        return "generic"
-
-    # --- WebFetch ---
-    if tool_name == "WebFetch":
-        url = tool_input.get("url", "")
-        if not OB_REGEX.search(url):
-            return None
-        if "api/add" in url:
+        if CAPTURE_RE.search(cmd):
             return "capture-only"
-        return "targeted"
+        return "targeted" if FILTER_RE.search(cmd) else "generic"
 
-    # --- MCP tools ---
+    if tool_name == "WebFetch":
+        url = (tool_input or {}).get("url", "")
+        if not IDENT_RE.search(url):
+            return None
+        return "capture-only" if CAPTURE_RE.search(url) else "targeted"
+
     if "search_brain" in tool_name:
-        query = tool_input.get("query", "")
-        return "targeted" if query.strip() else "generic"
+        return "targeted" if (tool_input or {}).get("query", "").strip() else "generic"
     if "list_recent" in tool_name:
         return "generic"
     if "add_memory" in tool_name:
         return "capture-only"
 
-    # --- Reading local memory files ---
-    if tool_name in ("Read", "Grep", "Glob"):
-        path = (
-            tool_input.get("file_path", "")
-            or tool_input.get("path", "")
-            or tool_input.get("pattern", "")
-        )
-        if re.search(r"memory/.*\.md|open-brain|MEMORY\.md", path, re.IGNORECASE):
-            return "read-memory"
-
     return None
 
 
-# ===== Main ================================================================
+# ===== Recording ===========================================================
+
+def emit(phase, session_id, tool_name, tool_input, classification, outcome,
+         result=None, integrity=None):
+    rec = records.build(
+        phase=phase, session_id=session_id, tool_name=tool_name,
+        tool_input=tool_input, classification=classification, outcome=outcome,
+        mode=MODE, rule_id=PREFLIGHT_RULE["rule_id"],
+        rule_kind=PREFLIGHT_RULE["rule_kind"],
+        rule_config_hash=RULE_CONFIG_HASH, message_version=MESSAGE_VERSION,
+        result=result, rule_identifier_re=IDENT_RE, integrity=integrity,
+    )
+    if not records.write(rec):
+        # The record is the product (D6). A write failure is a measurement gap
+        # and must not be silent -- but it must also not break the tool call.
+        print("preflight: decision record could not be written", file=sys.stderr)
+
+
+# ===== Phases ==============================================================
+
+def handle_pre(session_id, tool_name, tool_input):
+    gate = gate_path(session_id)
+
+    if not gate.exists():
+        # v2 allowed here. Failing closed is the D4 posture: a missing
+        # precondition is a block, and deletion must not open the gate.
+        emit("pre", session_id, tool_name, tool_input, None, "blocked",
+             integrity={"missing_state": True})
+        if MODE == "enforce":
+            print(MSG_BLOCKED + "\n\n(no gate state for this session)", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(0)
+
+    if gate.read_text().strip() == "satisfied":
+        emit("pre", session_id, tool_name, tool_input, None, "already-satisfied")
+        sys.exit(0)
+
+    classification = classify(tool_name, tool_input)
+
+    if classification == "targeted":
+        gate.write_text("satisfied")
+        emit("pre", session_id, tool_name, tool_input, classification, "satisfies")
+        sys.exit(0)
+
+    if classification == "capture-only":
+        emit("pre", session_id, tool_name, tool_input, classification,
+             "permitted-non-qualifying")
+        sys.exit(0)
+
+    if classification == "generic":
+        emit("pre", session_id, tool_name, tool_input, classification, "blocked")
+        if MODE == "enforce":
+            print(MSG_GENERIC, file=sys.stderr)
+            sys.exit(2)
+        sys.exit(0)
+
+    emit("pre", session_id, tool_name, tool_input, None, "blocked")
+    if MODE == "enforce":
+        print(MSG_BLOCKED, file=sys.stderr)
+        sys.exit(2)
+    sys.exit(0)
+
+
+def handle_post(session_id, tool_name, tool_input, tool_response):
+    """Record the result of a call.
+
+    v3 records only. Flipping satisfaction on a confirmed non-error result is
+    D5.1 and lands next; until then this establishes the after-dataset's result
+    fields so the before/after comparison has something to compare.
+    """
+    classification = classify(tool_name, tool_input)
+    if classification is None:
+        sys.exit(0)
+
+    status = "absent"
+    if isinstance(tool_response, dict):
+        err = tool_response.get("error") or tool_response.get("is_error")
+        status = "error" if err else "ok"
+    elif tool_response is not None:
+        status = "ok"
+
+    emit("post", session_id, tool_name, tool_input, classification, "observed",
+         result={"status": status})
+    sys.exit(0)
+
 
 def main():
     try:
@@ -188,73 +257,12 @@ def main():
     session_id = data.get("session_id", "default")
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})
+    phase = data.get("hook_event_name", "PreToolUse")
 
-    gate_file = GATE_DIR / f"{GATE_PREFIX}{session_id}"
-
-    # ----- Fail-open: no gate file -> allow (don't brick sessions) -----
-    if not gate_file.exists():
-        log(f"[ALLOW no-gate] session={session_id} tool={tool_name}")
-        sys.exit(0)
-
-    state = gate_file.read_text().strip()
-
-    # ----- Already satisfied this turn -----
-    if state == "satisfied":
-        log(f"[ALLOW satisfied] session={session_id} tool={tool_name}")
-        sys.exit(0)
-
-    # ----- Classify the tool call -----
-    classification = classify_ob_query(tool_name, tool_input)
-
-    # Targeted query or memory read -> satisfy gate
-    if classification in ("targeted", "read-memory"):
-        gate_file.write_text("satisfied")
-        audit(session_id, tool_name, tool_input, classification, "ALLOW")
-        log(f"[ALLOW {classification}] session={session_id} tool={tool_name}")
-        sys.exit(0)
-
-    # Generic query -> BLOCK with actionable message
-    if classification == "generic":
-        audit(session_id, tool_name, tool_input, classification, "REJECT")
-        log(f"[REJECT generic] session={session_id} tool={tool_name}")
-
-        reason = (
-            "OPEN BRAIN GATE — GENERIC QUERY REJECTED\n\n"
-            "Your Open Brain query has no search filter (WHERE/ILIKE/search terms). "
-            "Generic 'ORDER BY ... LIMIT N' queries do not satisfy the gate.\n\n"
-            "Fix: Add a WHERE clause with ILIKE terms relevant to the user's request.\n"
-            f"User prompt saved at: /tmp/{PROMPT_PREFIX}{session_id}\n\n"
-            "Example:\n"
-            "  WHERE summary ILIKE '%keyword_from_user_request%'\n"
-            "Or use MCP:\n"
-            "  search_brain with a non-empty query string.\n"
-        )
-        print(reason, file=sys.stderr)
-        sys.exit(2)
-
-    # Capture-only -> allow the write but do NOT flip the gate
-    if classification == "capture-only":
-        audit(session_id, tool_name, tool_input, classification, "ALLOW-NO-FLIP")
-        log(
-            f"[ALLOW capture-only, gate stays pending] "
-            f"session={session_id} tool={tool_name}"
-        )
-        sys.exit(0)
-
-    # ----- Not OB-related at all -> BLOCK -----
-    log(f"[BLOCK] session={session_id} tool={tool_name}")
-
-    reason = (
-        "OPEN BRAIN GATE: You must query Open Brain before any other tool calls "
-        "this turn. Query via one of:\n"
-        "  1. Direct SQL query to Open Brain PostgreSQL database\n"
-        "     IMPORTANT: Must include WHERE/ILIKE with terms from the user's request.\n"
-        "  2. Read local memory files (~/.claude/projects/*/memory/*.md)\n"
-        "  3. MCP: search_brain with a targeted query\n"
-        "\nEvery turn requires a targeted Open Brain query. No exceptions."
-    )
-    print(reason, file=sys.stderr)
-    sys.exit(2)
+    if phase == "PostToolUse":
+        handle_post(session_id, tool_name, tool_input, data.get("tool_response"))
+    else:
+        handle_pre(session_id, tool_name, tool_input)
 
 
 if __name__ == "__main__":
