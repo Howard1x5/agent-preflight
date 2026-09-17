@@ -210,6 +210,26 @@ gate five times in one session by reading memory files it had no use for,
 having reasoned explicitly about which was smallest — in a session where three
 of four documented backend access paths were broken.
 
+### What the old instrument could not measure at all
+
+Running the v4 report over the frozen pre-intervention dataset returns:
+
+```
+satisfies-unverified  689   decided from the request; no result was ever observed
+satisfies-substitute  115   opened by an action that contacted nothing
+confirmed               0   prerequisite actually established
+```
+
+**Zero confirmed consultations in 162 days** — not because the dependency was
+down, but because the instrument decided from the request and never observed a
+result. It could not produce that number.
+
+This constrains what the before/after comparison can claim. The after-metric
+cannot be "fewer local reads", because local reads are no longer a category.
+Part of the result is that the old log could not answer the question the new
+one answers, so pre-intervention satisfactions are counted under distinct names
+and are never added to confirmed ones.
+
 ### What remains unexplained
 
 Roughly 58 local reads fall in April through June, outside any documented
