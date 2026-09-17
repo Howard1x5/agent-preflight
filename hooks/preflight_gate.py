@@ -25,6 +25,8 @@ happened -- the gap that made 689 of v2's records unconfirmable.
   E. Session receipt. A log nobody reads for 162 days is this project's own
      Incident 3, so the numbers are pushed at the operator at session end
      rather than stored for later. Compact when healthy, expanded when not.
+     Delivered via `systemMessage` on JSON stdout -- the harness's documented
+     operator channel -- because stderr on exit 0 reaches nobody.
 
 Rules are data and shell is admitted by parsing; both live in hooks/rules.py.
 
@@ -140,6 +142,27 @@ def emit(phase, session_id, tool_name, tool_input, classification, outcome,
         print("preflight: decision record could not be written", file=sys.stderr)
 
 
+def notify(msg):
+    """The operator-visible channel.
+
+    VERIFIED against the harness, because assuming this is exactly the mistake
+    this project documents. Claude Code surfaces `systemMessage` on a hook's
+    JSON stdout -- "Display a message to the user (all hooks)". Writing to
+    stderr and exiting 0 is NOT an operator channel: for PreToolUse/PostToolUse
+    stderr is shown to the model on exit 2, and a Stop hook's exit-0 stderr
+    reaches nobody. A receipt that wrote to stderr would have looked correct --
+    it writes, it exits clean, its tests pass -- while never being seen. That
+    is this project's own failure mode.
+
+    Agent-facing post-phase feedback is a DIFFERENT channel
+    (hookSpecificOutput.additionalContext) and is not yet wired; see TODO T3.
+    """
+    try:
+        print(json.dumps({"systemMessage": msg}))
+    except (TypeError, ValueError, OSError):
+        pass
+
+
 def block(msg, exit_code=2):
     if MODE == "enforce":
         print(msg, file=sys.stderr)
@@ -172,8 +195,8 @@ def handle_pre(session_id, tool_name, tool_input, tool_use_id):
         # satisfaction. It is bounded, not a state to live in for eight days.
         emit("pre", session_id, tool_name, tool_input, None, "degraded-allow",
              failures=failures)
-        print(f"PREFLIGHT DEGRADED: backend unconfirmed after {failures} "
-              f"consecutive failures. Enforcement is NOT in effect.", file=sys.stderr)
+        notify(f"PREFLIGHT DEGRADED: backend unconfirmed after {failures} "
+               f"consecutive failures. Enforcement is NOT in effect.")
         sys.exit(0)
 
     classification = R.classify(tool_name, tool_input, RULE)
@@ -243,11 +266,10 @@ def handle_post(session_id, tool_name, tool_input, tool_response, tool_use_id):
          "unconfirmed", result={"status": reason}, failures=failures)
 
     if degraded:
-        print(f"PREFLIGHT DEGRADED: {failures} consecutive unconfirmed backend "
-              f"queries ({reason}). Enforcement suspended until one confirms.",
-              file=sys.stderr)
+        notify(f"PREFLIGHT DEGRADED: {failures} consecutive unconfirmed backend "
+               f"queries ({reason}). Enforcement suspended until one confirms.")
     else:
-        print(MSG_RETRY.format(reason=reason, n=failures), file=sys.stderr)
+        notify(MSG_RETRY.format(reason=reason, n=failures))
     sys.exit(0)
 
 
@@ -287,9 +309,8 @@ def receipt(session_id):
     healthy = unconfirmed == 0 and degraded == 0 and incomplete == 0
 
     if healthy:
-        print(f"preflight: {confirmed} confirmed consultation(s), "
-              f"{blocked} blocked. rule={(RULE or {}).get('rule_id')} mode={MODE}",
-              file=sys.stderr)
+        notify(f"preflight: {confirmed} confirmed consultation(s), "
+               f"{blocked} blocked. rule={(RULE or {}).get('rule_id')} mode={MODE}")
         return
 
     out = [
@@ -310,7 +331,7 @@ def receipt(session_id):
             "  answered. A well-formed failure looks like success; that is the",
             "  failure mode this control exists to catch.",
             ""]
-    print("\n".join(out), file=sys.stderr)
+    notify("\n".join(out))
 
 
 def collections_count(rows, key):

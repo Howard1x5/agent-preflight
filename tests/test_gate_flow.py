@@ -27,7 +27,18 @@ def home(tmp_path):
 def run(env, payload):
     p = subprocess.run([sys.executable, str(GATE)], input=json.dumps(payload),
                        capture_output=True, text=True, env=env)
-    return p.returncode, p.stderr
+    return p.returncode, p.stderr, p.stdout
+
+
+def operator_text(stdout):
+    """What the operator actually sees: systemMessage on JSON stdout.
+
+    Asserting on stderr would pass while the message reached nobody.
+    """
+    try:
+        return json.loads(stdout).get("systemMessage", "")
+    except (ValueError, AttributeError):
+        return ""
 
 
 def state_file(env, session="s1"):
@@ -75,7 +86,7 @@ def post(env, cmd, response, session="s1", tuid="t1"):
 
 def test_missing_state_blocks(home):
     """v2 failed open here, so deleting one file disabled enforcement."""
-    code, err = pre(home, GOOD)
+    code, err, _ = pre(home, GOOD)
     assert code == 2
     assert "no gate state" in err
 
@@ -89,7 +100,7 @@ def test_targeted_request_alone_does_not_open_the_gate(home):
     any query ran.
     """
     p = seed(home)
-    code, _ = pre(home, GOOD)
+    code, _, _ = pre(home, GOOD)
     assert code == 0
     st = json.loads(p.read_text())
     assert st["state"] == "candidate", "the gate must not be satisfied pre-execution"
@@ -98,7 +109,7 @@ def test_targeted_request_alone_does_not_open_the_gate(home):
 def test_confirmed_result_opens_the_gate(home):
     p = seed(home)
     pre(home, GOOD)
-    code, _ = post(home, GOOD, '{"results": [{"id": 1}]}')
+    code, _, _ = post(home, GOOD, '{"results": [{"id": 1}]}')
     assert code == 0
     assert json.loads(p.read_text())["state"] == "satisfied"
 
@@ -116,11 +127,11 @@ def test_wellformed_failure_does_not_open_the_gate(home):
     the write succeeded, HTTP 200, no alert."""
     p = seed(home)
     pre(home, GOOD)
-    code, err = post(home, GOOD, '{"error": "connection refused"}')
+    code, _, out = post(home, GOOD, '{"error": "connection refused"}')
     st = json.loads(p.read_text())
     assert st["state"] != "satisfied"
     assert st["failures"] == 1
-    assert "did not confirm" in err
+    assert "did not confirm" in operator_text(out)
 
 
 def test_confirmation_is_bound_to_the_admitted_call(home):
@@ -138,22 +149,23 @@ def test_failures_accumulate_then_degrade(home):
     p = seed(home)
     for i in range(1, 4):
         pre(home, GOOD, tuid=f"t{i}")
-        _, err = post(home, GOOD, '{"error": "down"}', tuid=f"t{i}")
-        assert "Consecutive failures" in err
+        _, _, out = post(home, GOOD, '{"error": "down"}', tuid=f"t{i}")
+        assert "Consecutive failures" in operator_text(out)
         assert json.loads(p.read_text())["degraded"] is False, f"degraded too early at {i}"
     pre(home, GOOD, tuid="t4")
-    _, err = post(home, GOOD, '{"error": "down"}', tuid="t4")
+    _, _, out = post(home, GOOD, '{"error": "down"}', tuid="t4")
     st = json.loads(p.read_text())
     assert st["failures"] == 4 and st["degraded"] is True
-    assert "DEGRADED" in err
+    assert "DEGRADED" in operator_text(out)
 
 
 def test_degraded_allows_but_says_so_every_time(home):
     """Eight silent days was Incident 1. Degraded must never be quiet."""
     seed(home, failures=4, degraded=True)
-    code, err = pre(home, "ls -la")
+    code, _, out = pre(home, "ls -la")
     assert code == 0, "degraded must not brick the session"
-    assert "DEGRADED" in err and "NOT in effect" in err
+    msg = operator_text(out)
+    assert "DEGRADED" in msg and "NOT in effect" in msg
 
 
 def test_a_confirmation_clears_degraded(home):
@@ -170,7 +182,7 @@ def test_a_confirmation_clears_degraded(home):
 
 def test_compound_command_gets_the_specific_message(home):
     seed(home)
-    code, err = pre(home, f"curl http://{EP}/api/search ; rm -rf /tmp/x")
+    code, err, _ = pre(home, f"curl http://{EP}/api/search ; rm -rf /tmp/x")
     assert code == 2
     assert "not interpreted" in err and "wrapper" in err
 
@@ -181,19 +193,21 @@ def test_receipt_is_compact_when_healthy(home):
     seed(home)
     pre(home, GOOD)
     post(home, GOOD, '{"results": []}')
-    code, err = run(home, {"hook_event_name": "Stop", "session_id": "s1"})
+    code, _, out = run(home, {"hook_event_name": "Stop", "session_id": "s1"})
     assert code == 0
-    assert "confirmed consultation" in err
-    assert "attention required" not in err
+    msg = operator_text(out)
+    assert "confirmed consultation" in msg, "receipt must reach the OPERATOR channel"
+    assert "attention required" not in msg
 
 
 def test_receipt_escalates_when_unconfirmed(home):
     seed(home)
     pre(home, GOOD)
     post(home, GOOD, '{"error": "down"}')
-    _, err = run(home, {"hook_event_name": "Stop", "session_id": "s1"})
-    assert "attention required" in err
-    assert "UNCONFIRMED" in err
+    _, _, out = run(home, {"hook_event_name": "Stop", "session_id": "s1"})
+    msg = operator_text(out)
+    assert "attention required" in msg
+    assert "UNCONFIRMED" in msg
 
 
 def test_receipt_reports_a_measurement_gap(home):
@@ -203,5 +217,5 @@ def test_receipt_reports_a_measurement_gap(home):
     post(home, GOOD, '{"error": "down"}')
     run(home, {"hook_event_name": "PreToolUse", "session_id": "s2",
                "tool_name": "Bash", "tool_input": {"command": "ls"}})
-    _, err = run(home, {"hook_event_name": "Stop", "session_id": "s2"})
-    assert "INCOMPLETE" in err
+    _, _, out = run(home, {"hook_event_name": "Stop", "session_id": "s2"})
+    assert "INCOMPLETE" in operator_text(out)

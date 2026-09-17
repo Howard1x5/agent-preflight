@@ -47,3 +47,30 @@ codebase and makes it expensive.
 
 Not urgent. Claude Code is the current user and the only one with a mature hook
 contract. But the architecture decision is easier now than later.
+
+---
+
+## T3 — Agent-facing feedback in the post phase
+
+`PostToolUse` currently reports an unconfirmed query to the **operator** via
+`systemMessage`. The agent is not told, so it has no cue to retry.
+
+Feeding text back to the model from the post phase is a different channel
+(`hookSpecificOutput.additionalContext`) and has not been verified against the
+harness. Until it is, the retry hint reaches a human who is not the one able to
+act on it in that moment.
+
+**To do:** verify the channel exists and carries text to the model, then route
+the retry message there and keep only degradation on the operator channel.
+
+---
+
+## T4 — Receipt cost grows with the record file
+
+`receipt()` reads the whole of `decisions.jsonl` and filters by session on every
+session end. That is fine at hundreds of records and wrong at hundreds of
+thousands.
+
+**To do:** roll records per day (the export format already assumes one file per
+day) and read only the current day, or keep a per-session counter file updated
+as decisions are made.

@@ -189,6 +189,24 @@ a worse outcome than the problem.
 Confirmed present in Claude Code's hook payload (`tool_response`). Unverified
 elsewhere — see `TODO.md` T2.
 
+**Verified harness contract (2026-09-17).** Checked against Claude Code
+2.1.273 rather than assumed, because assuming is the failure mode this project
+documents:
+
+| assumption | status |
+|---|---|
+| `PreToolUse` carries `tool_use_id` | confirmed — candidate binding works |
+| `PostToolUse` carries `tool_response` and `tool_use_id` | confirmed |
+| `Stop` carries `session_id` | confirmed (no `tool_name`/`tool_input`) |
+| stderr on exit 0 reaches the operator | **false** — see below |
+| `systemMessage` on JSON stdout reaches the operator | confirmed, "all hooks" |
+
+The receipt originally wrote to stderr and exited 0. It would have written
+successfully, exited clean, and passed its tests while reaching nobody — a
+successful-looking failure in the control built to detect them. Operator-facing
+output now goes through `systemMessage`; agent-facing blocks keep stderr with
+exit 2, which is the documented path for those.
+
 **Implementation note on step 6 — why a parse and not a denylist.** The
 tokenizer was probed before the parser was built, and it does not surface two
 constructs: a newline is consumed as whitespace, so `curl <configured
