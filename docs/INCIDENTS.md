@@ -154,7 +154,33 @@ By month:
 and stable infrastructure the control worked almost perfectly for two months.
 Six of fifteen sessions show zero drift, including two of 80 and 93 events.
 
-### Root cause
+### Root cause — the control published its own bypass
+
+When the gate blocks a call it returns a message telling the agent how to satisfy
+it. That message lists three methods:
+
+```
+OPEN BRAIN GATE: You must query Open Brain before any other tool calls
+this turn. Query via one of:
+  1. Direct SQL query to Open Brain PostgreSQL database
+  2. Read local memory files (~/.claude/projects/*/memory/*.md)
+  3. MCP: search_brain with a targeted query
+```
+
+**Method 2 does not contact the backend.** It is offered as co-equal with the two
+that do, and it is by far the cheapest of the three. The agents were not evading
+the control. They were following its instructions.
+
+This explains the distribution in a way neither "drift" nor "outage" does on its
+own: 66 of the 115 occurred on days the backend was demonstrably reachable
+(agents taking the advertised cheap path), and 49 during outages (the only
+advertised method still working). Both populations are the same behaviour.
+
+The corollary for the fix is easy to miss: removing `read-memory` from the
+classifier is **not sufficient**. The message must stop naming it, or the control
+will keep instructing agents to perform an action that now gets them blocked.
+
+### Why it persisted
 
 The local-read substitute is not a slow leak. It is a **pressure-relief valve
 that hides failure of the real path.** While the dependency is healthy it is

@@ -140,8 +140,12 @@ Incident 4). Recorded in `DESIGN-BRIEF-classification.md` and
    blocks non-candidates; `PostToolUse` flips satisfaction, and only on a
    **non-error** result. Non-error, not non-empty — a targeted search that
    correctly returns zero rows is diligence, not a failure.
-2. **The local-read substitute is removed.** No local file read satisfies a
-   live-backend requirement. With no substitute available, an unreachable
+2. **The local-read substitute is removed — from the classifier *and* from the
+   block message.** No local file read satisfies a live-backend requirement, and
+   the message the gate returns must stop listing it as an approved method. The
+   message is the root cause of Incident 4: it advertised the bypass on every
+   block. Fixing `classify()` alone leaves the control instructing agents to do
+   something that now gets them blocked. With no substitute available, an unreachable
    backend blocks, and the block is the outage alert. This single change
    addresses Incidents 1 and 4 together.
 3. **Gate state leaves `/tmp`.** The current file is named for the session and
