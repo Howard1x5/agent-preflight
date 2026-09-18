@@ -47,8 +47,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import records  # noqa: E402
 import rules as R  # noqa: E402
 
-MODE = "enforce"            # "observe" records without ever blocking
 RULE = R.load_rule("consult-backend")
+
+# "observe" records every decision but never blocks. It is the shadow-deploy
+# and the intended public default: an install that fails closed against a
+# backend the installer has not finished configuring bricks the first session.
+# Set in the rule config so the mode can change without editing source.
+MODE = (RULE or {}).get("mode", "enforce")
 DEGRADE_AFTER = (RULE or {}).get("degraded_after_consecutive_failures", 4)
 
 # ---------------------------------------------------------------------------
@@ -313,9 +318,12 @@ def receipt(session_id):
                f"{blocked} blocked. rule={(RULE or {}).get('rule_id')} mode={MODE}")
         return
 
+    header = ("PREFLIGHT SESSION RECEIPT — observing, not enforcing"
+              if MODE == "observe" else
+              "PREFLIGHT SESSION RECEIPT — attention required")
     out = [
         "",
-        "PREFLIGHT SESSION RECEIPT — attention required",
+        header,
         f"  rule            {(RULE or {}).get('rule_id')}  mode={MODE}",
         f"  confirmed       {confirmed}",
         f"  admitted        {admitted}   (allowed to run, awaiting confirmation)",
@@ -326,11 +334,18 @@ def receipt(session_id):
         out.append(f"  DEGRADED ALLOWS {degraded}   (enforcement was NOT in effect)")
     if incomplete:
         out.append(f"  INCOMPLETE      {incomplete}   (records missing — measurement gap)")
-    out += ["",
-            "  Unconfirmed queries ran but did not establish that the backend",
-            "  answered. A well-formed failure looks like success; that is the",
-            "  failure mode this control exists to catch.",
-            ""]
+    if MODE == "observe":
+        out += ["",
+                "  Shadow mode: these are the decisions this rule WOULD have made.",
+                "  Nothing was blocked. `blocked` counts calls that would not have",
+                "  satisfied the rule, which is the friction an enforce switch buys.",
+                ""]
+    else:
+        out += ["",
+                "  Unconfirmed queries ran but did not establish that the backend",
+                "  answered. A well-formed failure looks like success; that is the",
+                "  failure mode this control exists to catch.",
+                ""]
     notify("\n".join(out))
 
 

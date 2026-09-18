@@ -35,6 +35,15 @@ BUNDLED = Path(__file__).resolve().parent.parent / "rules" / "consult-backend.ex
 _RAW_DISQUALIFIERS = ("\n", "\r", "`", "$(", "${", "<(", ">(")
 
 
+def load_rule_file(path):
+    """Load one specific rule file. Used by tests so they never depend on
+    whatever local configuration happens to exist on the machine."""
+    try:
+        return _compile(json.loads(Path(path).read_text()))
+    except (OSError, ValueError):
+        return None
+
+
 def load_rule(rule_id="consult-backend"):
     """Load a rule. Local config wins; the bundled example is the fallback."""
     for candidate in (RULES_DIR / f"{rule_id}.json", BUNDLED):

@@ -31,7 +31,8 @@ gate = _load_gate()
 sys.path.insert(0, str(GATE_PATH.parent))
 import rules as R  # noqa: E402
 
-RULE = R.load_rule("consult-backend")
+RULE = R.load_rule_file(
+    Path(__file__).resolve().parent.parent / "rules" / "consult-backend.example.json")
 EP = "memory-backend.example"
 
 

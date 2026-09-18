@@ -15,7 +15,8 @@ HOOKS = Path(__file__).resolve().parent.parent / "hooks"
 sys.path.insert(0, str(HOOKS))
 import rules as R  # noqa: E402
 
-RULE = R.load_rule("consult-backend")
+RULE = R.load_rule_file(
+    Path(__file__).resolve().parent.parent / "rules" / "consult-backend.example.json")
 EP = "memory-backend.example"
 
 
@@ -123,3 +124,15 @@ def test_unparseable_body_does_not_confirm():
 def test_explicit_error_does_not_confirm():
     ok, why = R.confirms({"is_error": True, "stdout": ""}, RULE)
     assert not ok and why == "error"
+
+
+def test_rule_loading_never_silently_uses_local_config_in_tests():
+    """A test that picks up whatever is configured on the machine is not a test.
+
+    load_rule() prefers local config by design; tests must name the file.
+    """
+    assert RULE is not None
+    assert "memory-backend.example" in RULE["_endpoints"], (
+        "tests must load the bundled example rule explicitly, not whatever "
+        "rule happens to be installed"
+    )
