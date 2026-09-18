@@ -10,12 +10,9 @@ context, and sometimes they lose. A `PreToolUse` hook exits non-zero and the
 tool call **does not happen** — no interpretation, no context pressure, no
 negotiation.
 
-> **Status: early.** Extracted from a working system in daily personal use
-> since early 2026. Being generalised. Not yet stable for other people.
->
-> The core design decision was settled on 2026-09-16 and is being implemented.
-> See `docs/ARCHITECTURE.md` D5. Behaviour described below is the target, not
-> all of it is shipped.
+> **Status: v0.4.0, early.** Extracted from a working system in daily personal
+> use since early 2026. Installs in observe mode by default and blocks nothing
+> until you ask it to.
 
 ---
 
@@ -90,6 +87,9 @@ This project exists because success signals lie, so it should not produce one.
 - **It did not catch its own biggest failure.** Incident 4 was found by reading
   the audit log, not by the gate. That is the argument for the log, and an
   honest statement of the gate's limits.
+- **Gate state is not beyond the agent's reach.** The hook and the agent's
+  shell run as the same user, so state is unguessable rather than unwritable.
+  A hard boundary needs a separate uid; see `docs/ARCHITECTURE.md` D5.
 
 ---
 
@@ -136,11 +136,58 @@ continuing indefinitely.
 
 ---
 
+## Install
+
+```bash
+git clone <this repo> && cd agent-preflight
+python3 tools/install.py --dry-run     # see exactly what would change
+python3 tools/install.py               # observe mode; blocks nothing
+```
+
+Then edit the rule it creates at
+`~/.claude/state/agent-preflight/rules/consult-backend.json` so `endpoints`
+names your actual dependency. Until you do, nothing will match.
+
+Use it normally for a while, then look at what it *would* have done:
+
+```bash
+python3 tools/report.py --summary
+```
+
+When the numbers look right, turn it on:
+
+```bash
+python3 tools/install.py --enforce
+```
+
+`python3 tools/install.py --uninstall` removes every hook it added and leaves
+foreign ones alone. Both commands back up your settings file first.
+
+### Expect friction when you enforce
+
+Only a **single simple command** run through a configured client qualifies.
+Pipelines, chained commands, substitutions and ssh wrappers do not — not
+because they are dangerous, but because this control cannot establish what they
+did, and a control that guesses is the thing this project exists to document.
+
+Measured on the author's own traffic: enforcing would have refused **100% of
+real backend queries**, because every one was piped into something.
+
+`bin/preflight-query` is the way out. It performs the compound work internally
+and resolves the endpoint from the same rule file the gate reads:
+
+```bash
+preflight-query --query "deployment history" --limit 5
+```
+
+That is the whole trade. An unbounded shell-parsing problem becomes a one-line
+install.
+
 ## Requirements
 
 An agent harness that exposes lifecycle hooks. Claude Code does
-(`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`). Support for other
-harnesses is intended but not present.
+(`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `statusLine`).
+Support for other harnesses is intended but not present.
 
 Python 3.10+. No runtime dependencies.
 
@@ -157,6 +204,20 @@ reads, web fetches, MCP invocations, all of it. MCP is one of the things it
 catches, not the boundary it operates on.
 
 ---
+
+## What it records
+
+Every decision, in both hook phases, as one content-free row: closed-set enums,
+counts, booleans and one ratio. Never prompt text, tool arguments, file paths,
+hostnames or addresses.
+
+`python3 tools/report.py --export bundle.json` produces counts only — no
+per-decision rows at all — grouped so that installs running different rule
+contracts or different message text are never silently pooled. Sharing is
+manual; nothing uploads anything.
+
+A pre-intervention dataset from 162 days of the author's own use is committed
+at `data/before-2026-09-16.jsonl`, with its derivation in `tools/freeze_audit.py`.
 
 ## License
 

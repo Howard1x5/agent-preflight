@@ -60,6 +60,12 @@ def _compile(d):
     d = dict(d)
     d["_filter_re"] = re.compile("|".join(d.get("filter_evidence") or ["(?!)"]), re.I)
     d["_clients"] = set(d.get("clients") or [])
+    # Shipped clients that resolve the endpoint from this same config, so they
+    # cannot be required to name it in their arguments. This is what makes the
+    # wrapper usable: it converts an unbounded shell-parsing problem into a
+    # one-line install, which is the only reason compound commands can be
+    # refused without making the control unusable.
+    d["_wrappers"] = set(d.get("wrapper_clients") or [])
     d["_endpoints"] = [e.lower() for e in (d.get("endpoints") or [])]
     d["_capture_paths"] = [p.lower() for p in (d.get("capture_paths") or [])]
     return d
@@ -92,6 +98,16 @@ def parse_simple_command(cmd):
     return tokens
 
 
+def _wrapper_has_query(argv):
+    """The wrapper qualifies only with a non-empty --query."""
+    for i, tok in enumerate(argv):
+        if tok in ("-q", "--query") and i + 1 < len(argv) and argv[i + 1].strip():
+            return True
+        if tok.startswith("--query=") and tok.split("=", 1)[1].strip():
+            return True
+    return False
+
+
 def _addresses_endpoint(text, rule):
     t = (text or "").lower()
     return any(e in t for e in rule["_endpoints"])
@@ -120,9 +136,21 @@ def classify(tool_name, tool_input, rule):
 
     if tool_name == "Bash":
         argv = parse_simple_command(tool_input.get("command", ""))
-        if not argv or argv[0] not in rule["_clients"]:
+        if not argv:
             return None
+        binary = argv[0].rsplit("/", 1)[-1]
         args = " ".join(argv[1:])
+
+        if binary in rule["_wrappers"]:
+            # The wrapper addresses the configured endpoint by construction.
+            # It still has to carry a query: the wrapper is a trusted path to
+            # the dependency, not a trusted assertion that work happened.
+            if _is_capture(args, rule):
+                return "capture-only"
+            return "targeted" if _wrapper_has_query(argv) else "generic"
+
+        if binary not in rule["_clients"]:
+            return None
         if not _addresses_endpoint(args, rule):
             return None
         if _is_capture(args, rule):

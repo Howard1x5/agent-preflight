@@ -2,30 +2,54 @@
   "rule_id": "consult-backend",
   "rule_kind": "consult-backend",
   "description": "Consult the configured memory backend before acting on a turn.",
-
   "_comment_clients": "Executables permitted to carry out this prerequisite. A shell command qualifies only if it is a single simple command whose argv[0] is one of these. Anything compound goes through the wrapper.",
-  "clients": ["curl", "psql", "preflight-query"],
-
+  "clients": [
+    "curl",
+    "psql"
+  ],
+  "_comment_wrapper": "Shipped clients that resolve the endpoint from this same config. They need not name it in argv, which is what makes compound commands refusable without making the control unusable.",
+  "wrapper_clients": [
+    "preflight-query"
+  ],
   "_comment_endpoints": "Hosts and ports that ARE the dependency. Matching on the configured endpoint, not on a project name appearing in the command text, is what fixes INCIDENT-1b: a genuine query was blocked for lacking a magic substring, which also pressured agents into injecting that substring into semantic search strings.",
-  "endpoints": ["memory-backend.example", "memory-backend.example:8765", "10.0.0.5:8765"],
-
+  "endpoints": [
+    "memory-backend.example",
+    "memory-backend.example:8765",
+    "10.0.0.5:8765"
+  ],
   "_comment_mcp": "MCP tool names, by what they do. Reading satisfies; writing does not.",
-  "mcp_search_tools": ["search_brain"],
-  "mcp_generic_tools": ["list_recent"],
-  "mcp_capture_tools": ["add_memory"],
-
+  "mcp_search_tools": [
+    "search_brain"
+  ],
+  "mcp_generic_tools": [
+    "list_recent"
+  ],
+  "mcp_capture_tools": [
+    "add_memory"
+  ],
   "_comment_capture": "Endpoint paths that write rather than read. Permitted, never satisfying.",
-  "capture_paths": ["/api/add"],
-
+  "capture_paths": [
+    "/api/add"
+  ],
   "_comment_filters": "Evidence that a query filters rather than dumping. Applied to the query ARGUMENT, never to the raw shell string.",
   "filter_evidence": [
-    "\\bWHERE\\b", "\\bILIKE\\b", "\\bLIKE\\b", "\\bSIMILAR\\s+TO\\b",
-    "\\b@@\\b", "\\bts_query\\b", "\\bsimilarity\\b", "\\bto_tsvector\\b",
-    "information_schema", "\"query\"\\s*:\\s*\"[^\"]+\""
+    "\\bWHERE\\b",
+    "\\bILIKE\\b",
+    "\\bLIKE\\b",
+    "\\bSIMILAR\\s+TO\\b",
+    "\\b@@\\b",
+    "\\bts_query\\b",
+    "\\bsimilarity\\b",
+    "\\bto_tsvector\\b",
+    "information_schema",
+    "\"query\"\\s*:\\s*\"[^\"]+\""
   ],
-
   "_comment_expect": "Response shape required to confirm a real consultation. A non-error exit is not enough on its own -- Incident 2 was a well-formed HTTP 200 carrying a failure.",
-  "expect_response": {"format": "json", "required_keys": ["results"]},
-
+  "expect_response": {
+    "format": "json",
+    "required_keys": [
+      "results"
+    ]
+  },
   "degraded_after_consecutive_failures": 4
 }

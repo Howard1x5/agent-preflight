@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""preflight-query — the shipped client for a preflight rule's dependency.
+
+WHY THIS EXISTS
+
+The gate admits a shell command only as a single simple command whose argv[0]
+is a configured client. That refusal is deliberate: a control that tries to
+understand arbitrary shell loses, and a denylist over command text is unsound
+(see ARCHITECTURE.md D5.6). But the refusal makes ordinary work stop counting --
+pipelines, ssh-wrapped queries, python one-liners. Measured on the maintainer's
+own traffic in shadow mode, v4 refused 100% of real backend queries because
+every one of them was piped.
+
+So the refusal is only defensible if there is a path that does the compound
+work internally. This is that path. It converts an unbounded parsing problem
+into a one-line install.
+
+It resolves the endpoint from the same rule config the gate reads, so the two
+cannot disagree about what the dependency is.
+
+  preflight-query --query "deployment history" [--limit 5] [--rule consult-backend]
+
+Exit codes: 0 on a response, 1 on failure. Prints the raw JSON response, so
+the gate's PostToolUse confirmation sees the real result rather than a summary.
+"""
+
+import argparse
+import json
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+import rules as R  # noqa: E402
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="preflight-query")
+    ap.add_argument("-q", "--query", required=True,
+                    help="search terms drawn from the user's request")
+    ap.add_argument("--limit", type=int, default=5)
+    ap.add_argument("--rule", default="consult-backend")
+    ap.add_argument("--timeout", type=float, default=15.0)
+    args = ap.parse_args()
+
+    if not args.query.strip():
+        print("preflight-query: --query must not be empty", file=sys.stderr)
+        return 1
+
+    rule = R.load_rule(args.rule)
+    if rule is None:
+        print(f"preflight-query: no rule {args.rule!r} configured", file=sys.stderr)
+        return 1
+
+    endpoints = rule.get("endpoints") or []
+    if not endpoints:
+        print(f"preflight-query: rule {args.rule!r} declares no endpoint", file=sys.stderr)
+        return 1
+
+    path = rule.get("query_path", "/api/search")
+    payload = json.dumps({"query": args.query, "limit": args.limit}).encode()
+
+    errors = []
+    for ep in endpoints:
+        url = ep if ep.startswith("http") else f"http://{ep}"
+        try:
+            req = urllib.request.Request(
+                url.rstrip("/") + path, data=payload,
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=args.timeout) as resp:
+                body = resp.read().decode("utf-8", "replace")
+            # Printed raw and unsummarised: PostToolUse confirmation has to see
+            # the actual response shape, not this tool's opinion of it.
+            print(body)
+            return 0
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            # Endpoint text is withheld: it is operator configuration, and this
+            # output is read by an agent and recorded downstream.
+            errors.append(type(exc).__name__)
+
+    print(f"preflight-query: no configured endpoint answered ({', '.join(errors)})",
+          file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
