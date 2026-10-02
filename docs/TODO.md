@@ -65,12 +65,10 @@ the retry message there and keep only degradation on the operator channel.
 
 ---
 
-## T4 — Receipt cost grows with the record file
+## T4 — Receipt cost grows with the record file (RESOLVED)
 
-`receipt()` reads the whole of `decisions.jsonl` and filters by session on every
-session end. That is fine at hundreds of records and wrong at hundreds of
-thousands.
-
-**To do:** roll records per day (the export format already assumes one file per
-day) and read only the current day, or keep a per-session counter file updated
-as decisions are made.
+`receipt()` used to read the whole of `decisions.jsonl` and filter by session on
+every session end. It now reads a per-session tally file, bumped only after each
+record is successfully written, so it cannot count a decision the record file
+does not hold. Sessions with no tally (begun before the change) fall back to the
+full scan. Per-day record rolling was not needed for this and was not done.

@@ -227,3 +227,58 @@ def test_receipt_reports_a_measurement_gap(home):
                "tool_name": "Bash", "tool_input": {"command": "ls"}})
     _, _, out = run(home, {"hook_event_name": "Stop", "session_id": "s2"})
     assert "INCOMPLETE" in operator_text(out)
+
+
+# --- T4: receipt reads a per-session tally, not the whole record file ------
+
+def _stop(env, session="s1"):
+    code, _, out = run(env, {"hook_event_name": "Stop", "session_id": session})
+    assert code == 0
+    return operator_text(out)
+
+
+def _state_dir(env):
+    return Path(env["HOME"]) / ".claude" / "state" / "agent-preflight"
+
+
+def test_receipt_does_not_rescan_the_record_file(home):
+    """With a tally present, the receipt must not depend on decisions.jsonl.
+    Truncating the file proves the scan is gone."""
+    seed(home)
+    pre(home, "ls")
+    pre(home, GOOD)
+    post(home, GOOD, '{"results": []}')
+    (_state_dir(home) / "decisions.jsonl").write_text("")
+    msg = _stop(home)
+    assert "1 confirmed consultation" in msg and "1 blocked" in msg
+
+
+def test_tally_agrees_with_a_full_scan(home):
+    seed(home)
+    pre(home, "ls")
+    pre(home, GOOD)
+    post(home, GOOD, '{"results": []}')
+    with_tally = _stop(home)
+    for t in _state_dir(home).glob("*.tally"):
+        t.unlink()
+    assert _stop(home) == with_tally, "tally and full scan disagree"
+
+
+def test_receipt_falls_back_when_no_tally_exists(home):
+    """Sessions that began before the tally existed must still get a receipt."""
+    seed(home)
+    pre(home, GOOD)
+    post(home, GOOD, '{"results": []}')
+    for t in _state_dir(home).glob("*.tally"):
+        t.unlink()
+    assert "1 confirmed consultation" in _stop(home)
+
+
+def test_tallies_are_per_session(home):
+    seed(home, "s1")
+    seed(home, "s2")
+    pre(home, "ls", session="s1")
+    pre(home, GOOD, session="s2")
+    post(home, GOOD, '{"results": []}', session="s2")
+    assert "0 confirmed consultation(s), 1 blocked" in _stop(home, "s1")
+    assert "1 confirmed consultation(s), 0 blocked" in _stop(home, "s2")

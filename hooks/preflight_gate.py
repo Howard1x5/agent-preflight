@@ -180,6 +180,55 @@ def emit(phase, session_id, tool_name, tool_input, classification, outcome,
     )
     if not records.write(rec):
         print("preflight: decision record could not be written", file=sys.stderr)
+        return
+    bump_tally(session_id, outcome, bool(integrity))
+
+
+# ===== Per-session tally (T4) ==============================================
+# The receipt used to scan all of decisions.jsonl on every session end, which
+# is fine at hundreds of records and wrong at hundreds of thousands. The tally
+# is bumped only after the record itself is written, so it can never count a
+# decision the record file does not hold.
+
+def tally_path(session_id: str) -> Path:
+    secret = records.install_secret()
+    name = hashlib.sha256((secret + "tally" + (session_id or "")).encode()).hexdigest()[:32]
+    return records.STATE_DIR / f"{name}.tally"
+
+
+def bump_tally(session_id, outcome, incomplete):
+    p = tally_path(session_id)
+    t = read_state(p) or {"outcomes": {}, "incomplete": 0}
+    t["outcomes"][outcome] = t["outcomes"].get(outcome, 0) + 1
+    t["incomplete"] += 1 if incomplete else 0
+    write_state(p, t)
+
+
+def session_counts(session_id):
+    """(outcome counts, incomplete count), or None if the session has no records.
+
+    Sessions that began before the tally existed have no tally file; they fall
+    back to the full scan rather than reporting nothing.
+    """
+    t = read_state(tally_path(session_id))
+    if t is not None:
+        return t.get("outcomes", {}), t.get("incomplete", 0)
+    sh = records.session_hash(session_id)
+    try:
+        lines = records.RECORD_FILE.read_text().splitlines()
+    except OSError:
+        return None
+    mine = []
+    for ln in lines:
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        if r.get("session_hash") == sh:
+            mine.append(r)
+    if not mine:
+        return None
+    return collections_count(mine, "outcome"), sum(1 for r in mine if r.get("integrity"))
 
 
 def notify(msg):
@@ -322,29 +371,15 @@ def receipt(session_id):
     operator if the agent chooses to relay it. Compact when healthy, expanded
     when not, and never silent about an eligible session.
     """
-    sh = records.session_hash(session_id)
-    try:
-        lines = records.RECORD_FILE.read_text().splitlines()
-    except OSError:
+    counts = session_counts(session_id)
+    if counts is None:
         return
-    mine = []
-    for ln in lines:
-        try:
-            r = json.loads(ln)
-        except ValueError:
-            continue
-        if r.get("session_hash") == sh:
-            mine.append(r)
-    if not mine:
-        return
-
-    n = collections_count(mine, "outcome")
+    n, incomplete = counts
     confirmed = n.get("satisfies", 0)
     unconfirmed = n.get("unconfirmed", 0)
     blocked = n.get("blocked", 0)
     degraded = n.get("degraded-allow", 0)
     admitted = n.get("candidate-admitted", 0)
-    incomplete = sum(1 for r in mine if r.get("integrity"))
 
     healthy = unconfirmed == 0 and degraded == 0 and incomplete == 0
 
