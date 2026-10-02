@@ -247,6 +247,76 @@ threshold must turn the metric into an alert. Storage is not follow-up.
 
 ---
 
+## D7 — Separate the authority to change the control from the agent it controls
+
+**Decided 2026-10-02. Not yet implemented.**
+
+**Problem:** D1 accepted that "a user with local write access can disable it"
+and called the control a guardrail against agent behaviour, not a defence
+against a hostile operator. That framing has a gap: **the agent runs as the
+operator's uid.** Everything the operator can change, the agent can change —
+the hook registration in `~/.claude/settings.json`, the hook source in the repo,
+the rule file and its `mode`, the gate state, the records, and the install
+secret that derives the state paths. An escape hatch the agent can reach is a
+bypass, and Incident 4 is what a control publishing its own bypass looks like.
+
+**Decision:** modes that block nothing may live in user space. Enforcement may
+not. Authority to weaken enforcement must require a credential the agent does
+not hold.
+
+| mode | blocks? | authority lives in | why |
+|---|---|---|---|
+| observe | no | user settings | nothing to bypass |
+| rehearsal | no — the agent sees the real block message, the call proceeds | user settings | measures whether the message changes behaviour, with no lockout |
+| enforce | yes | root-owned | the agent must not be able to weaken it |
+| admin override | no, time-boxed | root, via `sudo` | the operator's escape hatch; the agent has no sudo password |
+
+**Enforce, concretely:**
+
+1. Hooks are registered in `/etc/claude-code/managed-settings.json`. Claude
+   Code documents that no user, project, local or `--settings` value overrides
+   managed settings, and that `disableAllHooks` set outside managed settings
+   does not unload managed hooks.
+2. Hook source is installed root-owned (`/opt/agent-preflight/`), not run from
+   a repo the agent can edit.
+3. The rule file and its `mode` are root-owned (`/etc/agent-preflight/`).
+4. `sudo preflight-admin dev --minutes N` writes a root-owned override with an
+   expiry. Every allow under it warns loudly and is recorded as an override
+   outcome. It expires on its own, so it cannot quietly become permanent (D4).
+
+**Residual weakness, stated:** the hook still runs as the operator's uid, so
+gate state and records are still written where the agent can reach them. A
+hash chain over records is tamper-*evident* only if its head is anchored
+somewhere the agent cannot rewrite — an agent that can edit the file can
+recompute an unanchored chain, and an HMAC key the hook can read, the agent can
+read.
+
+**Closing the residual — a gate service under its own uid**, staged:
+
+- **A.** A small service runs as a dedicated `preflight` user and owns state,
+  records and keys (0700). Hooks become thin clients over a local socket and
+  relay its decision. Forging state and deleting records stop working.
+- **B.** `preflight-query` routes through the service, which performs the
+  required query itself and records the response it received. Confirmation
+  comes from work the service observed, not from a result the agent reports.
+  This is not a reversal of D1: the hook remains the enforcement point and
+  still sees every tool call. The service proxies only the one dependency the
+  rule requires.
+- **C.** A host firewall rule matching on socket owner (`meta skuid`) lets only
+  the `preflight` user reach the backend endpoint, so the service is the only
+  path to it and every query is observed.
+
+After C, defeating the control requires root. That is the boundary D5 says a
+hard control needs, and it is the first point at which "constrains an agent"
+holds when the agent shares the operator's uid.
+
+**To verify, not assume:** that sudo's credential cache is per-terminal on the
+target host, so an agent shell cannot reuse a password the operator typed
+elsewhere; and whether commands the operator runs with `!` in the prompt pass
+through `PreToolUse`.
+
+---
+
 ## Scope limits, stated explicitly
 
 - **Not a defence against a hostile user.** Local configuration can disable it.
