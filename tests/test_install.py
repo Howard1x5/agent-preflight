@@ -112,3 +112,48 @@ def test_enforce_warns_about_the_query_shape(home):
     one was piped. Enforcing without saying so is a trap."""
     out = run(home, "--enforce")
     assert "preflight-query" in out
+
+
+WRAPPER = Path(__file__).resolve().parent.parent / "bin" / "preflight-query"
+
+
+def link(env):
+    return Path(env["HOME"]) / ".local" / "bin" / "preflight-query"
+
+
+def test_install_puts_wrapper_on_path(home):
+    """An agent told to use preflight-query gets command-not-found if the
+    wrapper only lives inside the repo, and falls back to a piped query the
+    gate refuses."""
+    run(home)
+    assert link(home).is_symlink()
+    assert link(home).resolve() == WRAPPER.resolve()
+
+
+def test_wrapper_link_is_idempotent(home):
+    run(home)
+    out = run(home)
+    assert "+ link" not in out
+    assert link(home).resolve() == WRAPPER.resolve()
+
+
+def test_foreign_wrapper_on_path_is_not_clobbered(home):
+    link(home).parent.mkdir(parents=True)
+    link(home).write_text("#!/bin/sh\necho mine\n")
+    out = run(home)
+    assert "left alone" in out
+    assert link(home).read_text() == "#!/bin/sh\necho mine\n"
+    run(home, "--uninstall")
+    assert link(home).exists(), "uninstall removed a foreign file"
+
+
+def test_uninstall_removes_only_our_link(home):
+    run(home)
+    run(home, "--uninstall")
+    assert not link(home).exists() and not link(home).is_symlink()
+
+
+def test_dry_run_creates_no_link(home):
+    out = run(home, "--dry-run")
+    assert "+ link" in out
+    assert not link(home).is_symlink()

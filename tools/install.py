@@ -15,6 +15,7 @@ Every run backs up the settings file first and prints the backup path.
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -24,6 +25,16 @@ ROOT = Path(__file__).resolve().parent.parent
 SETTINGS = Path.home() / ".claude" / "settings.json"
 STATE = Path.home() / ".claude" / "state" / "agent-preflight"
 RULES = STATE / "rules"
+
+# The wrapper only helps if an agent can run it by name. Left at bin/ inside the
+# repo, an agent told to "use preflight-query" gets command-not-found and falls
+# back to a piped curl -- which the gate refuses. Observed on the maintainer's
+# own sessions: every backend query took that path until the wrapper was invoked
+# by its full repo path. ~/.local/bin is on PATH by default on most Linux
+# distributions.
+BIN_DIR = Path.home() / ".local" / "bin"
+LINK = BIN_DIR / "preflight-query"
+WRAPPER = ROOT / "bin" / "preflight-query"
 
 HOOKS = {
     "UserPromptSubmit": "preflight_init.py",
@@ -110,6 +121,33 @@ def plan_uninstall(s):
     return changes
 
 
+def _link_is_ours():
+    return LINK.is_symlink() and LINK.resolve() == WRAPPER.resolve()
+
+
+def plan_link(uninstall):
+    """The wrapper's PATH link, as a change line, or None if nothing to do.
+
+    Never replaces a file it did not create: something else named
+    preflight-query on PATH is the operator's, not ours.
+    """
+    if uninstall:
+        return f"- link {LINK}" if _link_is_ours() else None
+    if _link_is_ours():
+        return None
+    if LINK.exists() or LINK.is_symlink():
+        return f"! {LINK} exists and is not ours — left alone"
+    return f"+ link {LINK} -> {WRAPPER}"
+
+
+def apply_link(change):
+    if change and change.startswith("+ link"):
+        BIN_DIR.mkdir(parents=True, exist_ok=True)
+        LINK.symlink_to(WRAPPER)
+    elif change and change.startswith("- link"):
+        LINK.unlink()
+
+
 def write_rule(enforce):
     RULES.mkdir(parents=True, exist_ok=True)
     dst = RULES / "consult-backend.json"
@@ -135,6 +173,9 @@ def main():
 
     s = load_settings()
     changes = plan_uninstall(s) if args.uninstall else plan_install(s, args.enforce)
+    link_change = plan_link(args.uninstall)
+    if link_change:
+        changes.append(link_change)
 
     if not changes:
         print("nothing to change")
@@ -150,6 +191,9 @@ def main():
     SETTINGS.write_text(json.dumps(s, indent=2))
     if b:
         print(f"\nbacked up settings to {b}")
+    apply_link(link_change)
+    if not args.uninstall and str(BIN_DIR) not in os.environ.get("PATH", "").split(os.pathsep):
+        print(f"\n{BIN_DIR} is not on PATH — add it, or agents will not find preflight-query.")
 
     if args.uninstall:
         print("uninstalled. Records and rules under ~/.claude/state/agent-preflight "
@@ -163,7 +207,7 @@ def main():
         print("example host, so nothing will match your real dependency.")
     if args.enforce:
         print("\nEnforcing. If your usual query shape is a pipeline or an ssh")
-        print("wrapper it will stop qualifying — use bin/preflight-query.")
+        print("wrapper it will stop qualifying — use preflight-query.")
     else:
         print("\nObserve mode: every decision is recorded, nothing is blocked.")
         print("Run `python3 tools/report.py --summary` to see what it would have done.")

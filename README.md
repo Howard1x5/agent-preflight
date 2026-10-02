@@ -174,7 +174,8 @@ Measured on the author's own traffic: enforcing would have refused **100% of
 real backend queries**, because every one was piped into something.
 
 `bin/preflight-query` is the way out. It performs the compound work internally
-and resolves the endpoint from the same rule file the gate reads:
+and resolves the endpoint from the same rule file the gate reads. The installer
+links it into `~/.local/bin`, so an agent can run it by name:
 
 ```bash
 preflight-query --query "deployment history" --limit 5
