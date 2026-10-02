@@ -89,6 +89,27 @@ def normalise(r):
     return r
 
 
+def dangling_by_session(rows):
+    """{session_hash: (unresolved candidates, last seen ts)} for sessions with any.
+
+    Computed per session, not as one global subtraction: a session that
+    resolved more than it admitted would otherwise hide another session's
+    stuck candidate, and a global count cannot say where to look.
+    """
+    admitted = collections.Counter()
+    resolved = collections.Counter()
+    last = {}
+    for r in rows:
+        sh, o = r.get("session_hash"), r.get("outcome")
+        if o == "candidate-admitted":
+            admitted[sh] += 1
+        elif o in CONFIRMING or o == "unconfirmed":
+            resolved[sh] += 1
+        last[sh] = max(last.get(sh) or "", r.get("ts") or "")
+    return {sh: (admitted[sh] - resolved[sh], last[sh])
+            for sh in admitted if admitted[sh] > resolved[sh]}
+
+
 def summarise(rows, unparsable):
     out = collections.Counter(r.get("outcome") for r in rows)
     confirmed = sum(out[o] for o in CONFIRMING)
@@ -99,7 +120,8 @@ def summarise(rows, unparsable):
 
     # An admitted candidate with no confirmation is a turn that proceeded on a
     # request rather than a result -- the v2 failure mode, still visible.
-    dangling = max(admitted - confirmed - unconfirmed, 0)
+    stuck = dangling_by_session(rows)
+    dangling = sum(n for n, _ in stuck.values())
 
     schemas = collections.Counter(r.get("schema_version", 1) for r in rows)
     return {
@@ -113,6 +135,9 @@ def summarise(rows, unparsable):
         "unconfirmed": unconfirmed,
         "admitted": admitted,
         "dangling_candidates": dangling,
+        "dangling_sessions": [
+            {"session": sh, "dangling": n, "last_seen": ts}
+            for sh, (n, ts) in sorted(stuck.items(), key=lambda kv: kv[1][1])],
         "unenforced_allows": unenforced,
         "incomplete_records": incomplete,
         "unparsable_lines": unparsable,
@@ -138,6 +163,9 @@ def print_summary(s):
     print(f"unconfirmed        {s['unconfirmed']}   ran, did not establish the work")
     if s["dangling_candidates"]:
         print(f"DANGLING           {s['dangling_candidates']}   admitted, never resolved either way")
+        for d in s["dangling_sessions"]:
+            print(f"  session {d['session']}   {d['dangling']} stuck   "
+                  f"last seen {(d['last_seen'] or '?')[:16]}")
     if s["unenforced_allows"]:
         print(f"UNENFORCED ALLOWS  {s['unenforced_allows']}   proceeded while degraded")
     if s["incomplete_records"]:

@@ -172,3 +172,43 @@ def test_export_separates_pre_and_post_intervention(recfile, tmp_path):
     assert len({c["message_version"] for c in b["counts"]}) == 2, (
         "v1 records carry an unknown message version and must not pool with v4"
     )
+
+
+def test_one_session_cannot_hide_another_sessions_stuck_candidate(recfile):
+    """The old global subtraction (admitted - confirmed - unconfirmed) read 0
+    here: session bbb's extra confirmation masked aaa's stuck candidate."""
+    p = recfile([
+        rec(session_hash="aaa", outcome="candidate-admitted"),
+        rec(session_hash="bbb", outcome="candidate-admitted"),
+        rec(session_hash="bbb", phase="post", outcome="satisfies"),
+        rec(session_hash="bbb", phase="post", outcome="satisfies"),
+    ])
+    out = run("--records", str(p), "--summary")
+    assert "DANGLING           1" in out
+    assert "session aaa" in out and "session bbb" not in out
+
+
+def test_dangling_sessions_are_listed_with_last_seen(recfile):
+    p = recfile([
+        rec(session_hash="aaa", outcome="candidate-admitted", ts="2026-09-21T03:59:00+00:00"),
+        rec(session_hash="aaa", outcome="candidate-admitted", ts="2026-09-21T04:10:00+00:00"),
+    ])
+    out = run("--records", str(p), "--summary")
+    assert "session aaa   2 stuck   last seen 2026-09-21T04:10" in out
+
+
+def test_resolved_candidates_are_not_flagged(recfile):
+    p = recfile([
+        rec(outcome="candidate-admitted"),
+        rec(phase="post", outcome="unconfirmed"),
+    ])
+    out = run("--records", str(p), "--summary")
+    assert "DANGLING" not in out
+
+
+def test_export_never_carries_session_hashes(recfile, tmp_path):
+    """The per-session dangling list is for the local operator only."""
+    p = recfile([rec(session_hash="secretsess", outcome="candidate-admitted")])
+    dst = tmp_path / "bundle.json"
+    run("--records", str(p), "--export", str(dst))
+    assert "secretsess" not in dst.read_text()
