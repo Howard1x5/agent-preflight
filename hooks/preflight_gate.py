@@ -63,11 +63,42 @@ DEGRADE_AFTER = (RULE or {}).get("degraded_after_consecutive_failures", 4)
 # RULE: state the requirement and name the configured clients. Never include a
 # worked example, and never name an action that does not perform the work.
 # ---------------------------------------------------------------------------
+
+def _named_clients(rule):
+    """The configured clients, by name, drawn from the rule itself.
+
+    "One of the configured clients" names nothing, so an agent that does not
+    already know them guesses -- and its guess is a piped curl, which the gate
+    refuses. Only actions that perform a query are listed, which is the half of
+    Incident 4's lesson the old wording kept. Endpoints are deliberately absent:
+    the wrapper resolves them, and agent-visible text is recorded downstream.
+    """
+    r = rule or {}
+    parts = []
+    wrappers = sorted(r.get("wrapper_clients") or [])
+    if wrappers:
+        parts.append(f"the shipped wrapper {', '.join(wrappers)} "
+                     "(requires --query carrying the search terms)")
+    clients = sorted(r.get("clients") or [])
+    if clients:
+        parts.append(f"{', '.join(clients)} as a single simple command")
+    tools = sorted(r.get("mcp_search_tools") or [])
+    if tools:
+        parts.append(f"the MCP tool {', '.join(tools)}")
+    if not parts:
+        return "No clients are configured for this rule."
+    return "Configured clients: " + "; ".join(parts) + "."
+
+
+CLIENTS = _named_clients(RULE)
+WRAPPERS = ", ".join(sorted((RULE or {}).get("wrapper_clients") or []))
+
 MSG_BLOCKED = (
     "PREFLIGHT GATE: this turn has not yet consulted the required backend.\n\n"
     "Satisfy it by running a filtered query against the configured endpoint\n"
     "through one of the configured clients. The query must carry search terms\n"
     "drawn from what the user actually asked.\n\n"
+    f"{CLIENTS}\n\n"
     "Reading a local file does not satisfy this. Neither does printing text\n"
     "that mentions the backend. The gate opens on a confirmed result, not on\n"
     "the shape of the request."
@@ -88,7 +119,11 @@ MSG_COMPOUND = (
     "Pipelines, chained commands, substitutions, redirections and remote\n"
     "wrappers are not refused because they are dangerous -- they are refused\n"
     "because this control cannot establish what they did.\n\n"
-    "Use the shipped wrapper, which is itself a configured client."
+    + (f"Use the shipped wrapper, {WRAPPERS}, which is itself a configured\n"
+       "client and does the compound work internally."
+       if WRAPPERS else
+       "No wrapper is configured for this rule; use a configured client as a\n"
+       "single simple command.")
 )
 
 MSG_RETRY = (

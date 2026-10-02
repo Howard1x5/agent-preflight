@@ -185,6 +185,14 @@ def test_compound_command_gets_the_specific_message(home):
     code, err, _ = pre(home, f"curl http://{EP}/api/search ; rm -rf /tmp/x")
     assert code == 2
     assert "not interpreted" in err and "wrapper" in err
+    assert "preflight-query" in err, "the agent must be told the wrapper's name"
+
+
+def test_block_message_reaching_the_agent_names_the_wrapper(home):
+    seed(home)
+    code, err, _ = pre(home, "ls")
+    assert code == 2
+    assert "preflight-query" in err and "--query" in err
 
 
 # --- receipt ---------------------------------------------------------------

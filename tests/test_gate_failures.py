@@ -185,6 +185,37 @@ def test_messages_contain_no_worked_example():
         assert "SELECT " not in msg
 
 
+def test_block_messages_name_the_configured_clients():
+    """"One of the configured clients" names nothing. An agent that does not
+    already know them guesses, and its guess is a piped query the gate refuses."""
+    rule = gate.RULE
+    for name in (rule.get("wrapper_clients") or []) + (rule.get("clients") or []) \
+            + (rule.get("mcp_search_tools") or []):
+        assert name in gate.MSG_BLOCKED, f"{name} missing from the block message"
+    for name in rule.get("wrapper_clients") or []:
+        assert name in gate.MSG_COMPOUND, f"{name} missing from the compound message"
+    assert "--query" in gate.MSG_BLOCKED, "the wrapper only qualifies with --query"
+
+
+def test_messages_never_name_an_endpoint():
+    """Agent-visible text is recorded downstream; the wrapper resolves the
+    endpoint itself, so the agent never needs it."""
+    for msg in ALL_MESSAGES:
+        for ep in gate.RULE.get("endpoints") or []:
+            assert ep not in msg, f"endpoint {ep} leaked into a message"
+
+
+def test_named_clients_lists_only_performing_actions():
+    """Capture and generic tools never satisfy, so naming them repeats the
+    shape of Incident 4."""
+    line = gate._named_clients({"clients": ["curl"], "wrapper_clients": ["w"],
+                                "mcp_search_tools": ["search_brain"],
+                                "mcp_generic_tools": ["list_recent"],
+                                "mcp_capture_tools": ["add_memory"]})
+    assert "list_recent" not in line and "add_memory" not in line
+    assert gate._named_clients({}) == "No clients are configured for this rule."
+
+
 def test_every_message_is_versioned_into_records():
     """Message text is load-bearing, so it must be attributable in the data."""
     assert gate.MESSAGE_VERSION
