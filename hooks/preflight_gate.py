@@ -252,10 +252,26 @@ def notify(msg):
         pass
 
 
+REHEARSAL_PREFIX = (
+    "PREFLIGHT REHEARSAL: this call was allowed. Under enforcement it would have\n"
+    "been blocked with the message below.\n\n"
+)
+
+
 def block(msg, exit_code=2):
     if MODE == "enforce":
         print(msg, file=sys.stderr)
         sys.exit(exit_code)
+    if MODE == "rehearsal":
+        # D7: the agent sees the real block message, but the call proceeds, so
+        # whether the message changes behaviour is measurable with no lockout.
+        # It is told this is a rehearsal: the call visibly succeeds, so a
+        # message pretending otherwise would be false. additionalContext on
+        # PreToolUse reaches the model alongside the tool result (verified
+        # against the harness docs; see test_rehearsal_* for the shape).
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": REHEARSAL_PREFIX + msg}}))
     sys.exit(0)
 
 
@@ -388,9 +404,9 @@ def receipt(session_id):
                f"{blocked} blocked. rule={(RULE or {}).get('rule_id')} mode={MODE}")
         return
 
-    header = ("PREFLIGHT SESSION RECEIPT — observing, not enforcing"
-              if MODE == "observe" else
-              "PREFLIGHT SESSION RECEIPT — attention required")
+    header = {"observe": "PREFLIGHT SESSION RECEIPT — observing, not enforcing",
+              "rehearsal": "PREFLIGHT SESSION RECEIPT — rehearsing, not enforcing",
+              }.get(MODE, "PREFLIGHT SESSION RECEIPT — attention required")
     out = [
         "",
         header,
@@ -404,7 +420,13 @@ def receipt(session_id):
         out.append(f"  DEGRADED ALLOWS {degraded}   (enforcement was NOT in effect)")
     if incomplete:
         out.append(f"  INCOMPLETE      {incomplete}   (records missing — measurement gap)")
-    if MODE == "observe":
+    if MODE == "rehearsal":
+        out += ["",
+                "  Rehearsal: the agent was shown each block message, but nothing",
+                "  was blocked. Compare refusals-before-first-admission against",
+                "  observe-mode sessions to see whether the message changes behaviour.",
+                ""]
+    elif MODE == "observe":
         out += ["",
                 "  Shadow mode: these are the decisions this rule WOULD have made.",
                 "  Nothing was blocked. `blocked` counts calls that would not have",

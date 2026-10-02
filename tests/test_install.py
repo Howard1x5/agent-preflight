@@ -157,3 +157,17 @@ def test_dry_run_creates_no_link(home):
     out = run(home, "--dry-run")
     assert "+ link" in out
     assert not link(home).is_symlink()
+
+
+def test_rehearsal_flag_sets_rehearsal_mode(home):
+    out = run(home, "--rehearsal")
+    assert "Rehearsal mode" in out
+    rule = json.loads((Path(home["HOME"]) / ".claude" / "state" /
+                       "agent-preflight" / "rules" / "consult-backend.json").read_text())
+    assert rule["mode"] == "rehearsal"
+
+
+def test_enforce_and_rehearsal_are_exclusive(home):
+    p = subprocess.run([sys.executable, str(TOOL), "--enforce", "--rehearsal"],
+                       capture_output=True, text=True, env=home)
+    assert p.returncode != 0

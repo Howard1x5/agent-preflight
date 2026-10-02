@@ -282,3 +282,71 @@ def test_tallies_are_per_session(home):
     post(home, GOOD, '{"results": []}', session="s2")
     assert "0 confirmed consultation(s), 1 blocked" in _stop(home, "s1")
     assert "1 confirmed consultation(s), 0 blocked" in _stop(home, "s2")
+
+
+# --- D7: rehearsal mode ------------------------------------------------------
+
+EXAMPLE_RULE = Path(__file__).resolve().parent.parent / "rules" / "consult-backend.example.json"
+
+
+def set_mode(env, mode):
+    d = json.loads(EXAMPLE_RULE.read_text())
+    d = {k: v for k, v in d.items() if not k.startswith("_comment")}
+    d["mode"] = mode
+    rules = Path(env["HOME"]) / ".claude" / "state" / "agent-preflight" / "rules"
+    rules.mkdir(parents=True, exist_ok=True)
+    (rules / "consult-backend.json").write_text(json.dumps(d))
+
+
+def agent_context(stdout):
+    for line in stdout.splitlines():
+        try:
+            o = json.loads(line)
+        except ValueError:
+            continue
+        ctx = (o.get("hookSpecificOutput") or {}).get("additionalContext")
+        if ctx:
+            return ctx
+    return ""
+
+
+def test_rehearsal_allows_the_call_and_shows_the_agent_the_block_message(home):
+    set_mode(home, "rehearsal")
+    seed(home)
+    code, err, out = pre(home, "ls")
+    assert code == 0, "rehearsal must never block"
+    ctx = agent_context(out)
+    assert ctx.startswith("PREFLIGHT REHEARSAL"), "the agent must be told it is a rehearsal"
+    assert "preflight-query" in ctx and "not yet consulted" in ctx
+    assert not err.strip(), "stderr reaches nobody on exit 0; the message must use the JSON channel"
+
+
+def test_rehearsal_compound_gets_the_compound_message(home):
+    set_mode(home, "rehearsal")
+    seed(home)
+    code, _, out = pre(home, f"curl http://{EP}/api/search ; rm -rf /tmp/x")
+    assert code == 0
+    assert "not interpreted" in agent_context(out)
+
+
+def test_rehearsal_records_as_rehearsal_not_as_observe_or_enforce(home):
+    set_mode(home, "rehearsal")
+    seed(home)
+    pre(home, "ls")
+    rec = [json.loads(l) for l in (Path(home["HOME"]) / ".claude" / "state" /
+           "agent-preflight" / "decisions.jsonl").read_text().splitlines()][-1]
+    assert rec["mode"] == "rehearsal" and rec["outcome"] == "blocked"
+
+
+def test_rehearsal_does_not_interfere_with_a_qualifying_query(home):
+    set_mode(home, "rehearsal")
+    seed(home)
+    code, _, out = pre(home, GOOD)
+    assert code == 0 and not agent_context(out)
+
+
+def test_observe_shows_the_agent_nothing(home):
+    set_mode(home, "observe")
+    seed(home)
+    code, _, out = pre(home, "ls")
+    assert code == 0 and not agent_context(out)

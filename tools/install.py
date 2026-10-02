@@ -79,7 +79,7 @@ def load_settings():
         return {}
 
 
-def plan_install(s, enforce):
+def plan_install(s, mode):
     changes = []
     hooks = s.setdefault("hooks", {})
     for event, script in HOOKS.items():
@@ -96,7 +96,7 @@ def plan_install(s, enforce):
         else:
             s["statusLine"] = {"type": "command", "command": status_cmd}
             changes.append("+ statusLine")
-    changes.append(f"= mode: {'enforce' if enforce else 'observe'}")
+    changes.append(f"= mode: {mode}")
     return changes
 
 
@@ -148,31 +148,35 @@ def apply_link(change):
         LINK.unlink()
 
 
-def write_rule(enforce):
+def write_rule(mode):
     RULES.mkdir(parents=True, exist_ok=True)
     dst = RULES / "consult-backend.json"
     if dst.exists():
         d = json.loads(dst.read_text())
-        d["mode"] = "enforce" if enforce else "observe"
+        d["mode"] = mode
         dst.write_text(json.dumps(d, indent=2))
         return dst, False
     d = json.loads((ROOT / "rules" / "consult-backend.example.json").read_text())
     d = {k: v for k, v in d.items() if not k.startswith("_comment")}
-    d["mode"] = "enforce" if enforce else "observe"
+    d["mode"] = mode
     dst.write_text(json.dumps(d, indent=2))
     return dst, True
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--enforce", action="store_true",
-                    help="enforce instead of observe (not the default, on purpose)")
+    m = ap.add_mutually_exclusive_group()
+    m.add_argument("--enforce", action="store_true",
+                   help="enforce instead of observe (not the default, on purpose)")
+    m.add_argument("--rehearsal", action="store_true",
+                   help="show the agent the real block messages without blocking")
     ap.add_argument("--uninstall", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     s = load_settings()
-    changes = plan_uninstall(s) if args.uninstall else plan_install(s, args.enforce)
+    mode = "enforce" if args.enforce else "rehearsal" if args.rehearsal else "observe"
+    changes = plan_uninstall(s) if args.uninstall else plan_install(s, mode)
     link_change = plan_link(args.uninstall)
     if link_change:
         changes.append(link_change)
@@ -200,7 +204,7 @@ def main():
               "were left in place — delete them yourself if you want them gone.")
         return 0
 
-    rule_path, created = write_rule(args.enforce)
+    rule_path, created = write_rule(mode)
     print(f"rule: {rule_path}" + (" (created from the example)" if created else " (mode updated)"))
     if created:
         print("\nEDIT THAT FILE before enforcing: `endpoints` currently names the")
@@ -208,6 +212,9 @@ def main():
     if args.enforce:
         print("\nEnforcing. If your usual query shape is a pipeline or an ssh")
         print("wrapper it will stop qualifying — use preflight-query.")
+    elif args.rehearsal:
+        print("\nRehearsal mode: the agent is shown each block message, nothing is")
+        print("blocked. Compare against observe-mode sessions with tools/report.py.")
     else:
         print("\nObserve mode: every decision is recorded, nothing is blocked.")
         print("Run `python3 tools/report.py --summary` to see what it would have done.")

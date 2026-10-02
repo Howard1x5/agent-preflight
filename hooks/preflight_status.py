@@ -83,7 +83,7 @@ def main():
     if unconfirmed:
         print(f"preflight {mode}: {confirmed} confirmed, {unconfirmed} UNCONFIRMED ({scope})")
         return
-    verb = "would-block" if mode == "observe" else "blocked"
+    verb = "would-block" if mode in ("observe", "rehearsal") else "blocked"
     print(f"preflight {mode}: {confirmed} confirmed, {blocked} {verb} ({scope})")
 
 
