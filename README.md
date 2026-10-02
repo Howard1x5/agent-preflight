@@ -184,6 +184,9 @@ preflight-query --query "deployment history" --limit 5
 That is the whole trade. An unbounded shell-parsing problem becomes a one-line
 install.
 
+A wrapper that exists is not a wrapper that gets used: agents do not discover
+it on their own. See `docs/FINDINGS.md` F1 for the measurement and the response.
+
 ## Requirements
 
 An agent harness that exposes lifecycle hooks. Claude Code does
