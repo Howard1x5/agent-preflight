@@ -21,10 +21,12 @@ D7 states, closed later by a dedicated-uid service.
 """
 
 import argparse
+import grp
 import json
 import os
 import pwd
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -36,7 +38,12 @@ import authority  # noqa: E402
 OPT = Path("/opt/agent-preflight")
 MANAGED = Path("/etc/claude-code/managed-settings.json")
 BIN = Path("/usr/local/bin")
-LINKS = ("preflight-query", "preflight-admin")
+LINKS = ("preflight-query", "preflight-admin", "preflight-report")
+SERVICE_USER = "preflight"
+SERVICE_HOME = Path("/var/lib/agent-preflight")
+UNIT = Path("/etc/systemd/system/agent-preflight.service")
+CLIENT_KIND = {"preflight_init.py": "init", "preflight_gate.py": "gate",
+               "preflight_status.py": "status"}
 
 HOOKS = {
     "UserPromptSubmit": "preflight_init.py",
@@ -87,21 +94,84 @@ def build_rule(home, bundled):
     return d
 
 
-def plan_managed(s, opt):
-    """Add our hooks to a managed-settings dict. Never touches anything else."""
+def hook_command(opt, script, service=False):
+    """Direct hooks run the gate in the operator's uid; service hooks relay to
+    the dedicated-uid service (D7 stage A)."""
+    if service:
+        return f"python3 {opt / 'hooks' / 'preflight_client.py'} {CLIENT_KIND[script]}"
+    return f"python3 {opt / 'hooks' / script}"
+
+
+def plan_managed(s, opt, service=False):
+    """Add our hooks to a managed-settings dict. Never touches anything else.
+
+    Our own entries whose command differs from the wanted one (switching
+    between direct and service hooks) are replaced, not duplicated.
+    """
     changes = []
     hooks = s.setdefault("hooks", {})
     for event, script in HOOKS.items():
+        want = hook_command(opt, script, service)
         groups = hooks.setdefault(event, [])
-        if any(script in (h.get("command") or "") for g in groups for h in g.get("hooks", [])):
+        if any((h.get("command") or "") == want for g in groups for h in g.get("hooks", [])):
             continue
-        groups.append({"matcher": "", "hooks": [
-            {"type": "command", "command": f"python3 {opt / 'hooks' / script}"}]})
-        changes.append(f"+ managed {event}: {script}")
-    if "statusLine" not in s:
-        s["statusLine"] = {"type": "command", "command": f"python3 {opt / 'hooks' / STATUS}"}
+        for g in groups:
+            g["hooks"] = [h for h in g.get("hooks", []) if not is_ours(h.get("command"))]
+        hooks[event] = [g for g in groups if g["hooks"]]
+        hooks[event].append({"matcher": "", "hooks": [{"type": "command", "command": want}]})
+        changes.append(f"+ managed {event}: {want.split('/')[-1]}")
+    want = hook_command(opt, STATUS, service)
+    cur = (s.get("statusLine") or {}).get("command")
+    if cur != want and (cur is None or is_ours(cur)):
+        s["statusLine"] = {"type": "command", "command": want}
         changes.append("+ managed statusLine")
     return changes
+
+
+def unit_text(group):
+    """systemd unit for the service. The hardening is not decoration: the
+    service holds the evidence, so it gets only the write access it needs."""
+    return f"""[Unit]
+Description=agent-preflight gate service (dedicated uid; ARCHITECTURE D7 stage A)
+After=network-online.target
+
+[Service]
+User={SERVICE_USER}
+Group={group}
+Environment=HOME={SERVICE_HOME}
+ExecStart=/usr/bin/python3 {OPT}/hooks/preflight_service.py
+StateDirectory=agent-preflight
+StateDirectoryMode=0700
+RuntimeDirectory=agent-preflight
+RuntimeDirectoryMode=0750
+UMask=0077
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths={SERVICE_HOME}
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+def ensure_service_user():
+    try:
+        pwd.getpwnam(SERVICE_USER)
+        return False
+    except KeyError:
+        subprocess.run(["useradd", "--system", "--home-dir", str(SERVICE_HOME),
+                        "--no-create-home", "--shell", "/usr/sbin/nologin", SERVICE_USER],
+                       check=True)
+        return True
+
+
+def operator_group():
+    name = os.environ.get("SUDO_USER")
+    gid = pwd.getpwnam(name).pw_gid if name else os.getgid()
+    return grp.getgrgid(gid).gr_name
 
 
 def plan_unmanaged(s):
@@ -131,7 +201,7 @@ def plan_unmanaged(s):
 def copy_source(src, dst):
     if dst.exists():
         shutil.rmtree(dst)
-    for sub in ("hooks", "bin", "rules"):
+    for sub in ("hooks", "bin", "rules", "tools"):
         shutil.copytree(src / sub, dst / sub,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     for p in dst.rglob("*"):
@@ -157,6 +227,8 @@ def write_json(p, d, mode=0o644):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--uninstall", action="store_true")
+    ap.add_argument("--service", action="store_true",
+                    help="run the gate as a dedicated-uid service (D7 stage A)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -171,7 +243,7 @@ def main():
         return 1
 
     managed = load_json(MANAGED)
-    changes = plan_unmanaged(managed) if args.uninstall else plan_managed(managed, OPT)
+    changes = plan_unmanaged(managed) if args.uninstall else plan_managed(managed, OPT, args.service)
     if args.uninstall:
         changes += [f"- {p}" for p in (OPT, authority.SYSTEM_RULES_DIR) if p.exists()]
         changes += [f"- link {BIN / n}" for n in LINKS if (BIN / n).is_symlink()]
@@ -179,6 +251,11 @@ def main():
         changes += [f"= copy source -> {OPT}",
                     f"= rule -> {authority.SYSTEM_RULES_DIR / 'consult-backend.json'} (mode=enforce)"]
         changes += [f"= link {BIN / n}" for n in LINKS]
+        if args.service:
+            changes += [f"= user {SERVICE_USER}, state {SERVICE_HOME} (0700)",
+                        f"= unit {UNIT} (enabled, started)"]
+    if args.uninstall and UNIT.exists():
+        changes += [f"- unit {UNIT} (records in {SERVICE_HOME} are kept)"]
     print("\n".join(f"  {c}" for c in changes))
     if args.dry_run:
         print("\ndry run — nothing written")
@@ -191,6 +268,10 @@ def main():
         print(f"\nbacked up managed settings to {b}")
 
     if args.uninstall:
+        if UNIT.exists():
+            subprocess.run(["systemctl", "disable", "--now", UNIT.name], check=False)
+            UNIT.unlink()
+            subprocess.run(["systemctl", "daemon-reload"], check=False)
         write_json(MANAGED, managed)
         for n in LINKS:
             if (BIN / n).is_symlink():
@@ -215,6 +296,21 @@ def main():
         if (BIN / n).is_symlink() or (BIN / n).exists():
             (BIN / n).unlink()
         (BIN / n).symlink_to(OPT / "bin" / n)
+
+    if args.service:
+        if ensure_service_user():
+            print(f"created system user {SERVICE_USER}")
+        UNIT.write_text(unit_text(operator_group()))
+        os.chmod(UNIT, 0o644)
+        subprocess.run(["systemctl", "daemon-reload"], check=True)
+        subprocess.run(["systemctl", "enable", "--now", UNIT.name], check=True)
+        subprocess.run(["systemctl", "restart", UNIT.name], check=True)
+        print(f"service running as {SERVICE_USER}; records now in {SERVICE_HOME}.")
+        print("Read them with: preflight-report")
+    elif UNIT.exists():
+        subprocess.run(["systemctl", "disable", "--now", UNIT.name], check=False)
+        UNIT.unlink()
+        subprocess.run(["systemctl", "daemon-reload"], check=False)
 
     print("\nEnforcing, with root-owned authority. Start a new Claude Code session for")
     print("the managed hooks to load. Escape hatch (sudo only):")

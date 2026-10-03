@@ -249,9 +249,10 @@ threshold must turn the metric into an alert. Storage is not follow-up.
 
 ## D7 — Separate the authority to change the control from the agent it controls
 
-**Decided 2026-10-02. Rehearsal mode, root-owned enforce install and the
-sudo-only override implemented 2026-10-02; the dedicated-uid service (A–C) is
-not.**
+**Decided 2026-10-02. Implemented 2026-10-02: rehearsal mode, the root-owned
+enforce install, the sudo-only override, the record hash chain, and stage A of
+the dedicated-uid service (`install_system.py --service`). Stages B and C are
+not implemented.**
 
 **Problem:** D1 accepted that "a user with local write access can disable it"
 and called the control a guardrail against agent behaviour, not a defence
@@ -297,7 +298,14 @@ read.
 
 - **A.** A small service runs as a dedicated `preflight` user and owns state,
   records and keys (0700). Hooks become thin clients over a local socket and
-  relay its decision. Forging state and deleting records stop working.
+  relay its decision. Deleting or editing records and state files stops
+  working. **Corrected 2026-10-02:** this was first written as "forging state
+  and deleting records stop working". Forging does not stop: the hook and the
+  agent share a uid, so the agent can connect to the same socket and send a
+  well-formed fabricated event, including a fabricated confirmation. Only B
+  closes that. If the service is unreachable the client fails closed, with the
+  root-only override as the operator's way out, so stopping the service is not
+  a bypass.
 - **B.** `preflight-query` routes through the service, which performs the
   required query itself and records the response it received. Confirmation
   comes from work the service observed, not from a result the agent reports.

@@ -211,9 +211,14 @@ preflight-admin status
 sudo preflight-admin end
 ```
 
-Every call allowed under an override warns and is recorded. Records and gate
-state are still written in your home directory; see `docs/ARCHITECTURE.md` D7
-for that residual weakness and the plan to close it.
+Every call allowed under an override warns and is recorded.
+
+Add `--service` to run the gate as a dedicated `preflight` system user. Records
+and gate state then live in `/var/lib/agent-preflight`, which your account (and
+so the agent) cannot read or write; read them with `preflight-report`. If the
+service is down, tool calls fail closed until it is back or you open an
+override. What this does not yet stop -- a fabricated event sent to the
+service -- is stated in `docs/ARCHITECTURE.md` D7.
 
 ## Requirements
 

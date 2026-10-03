@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+"""preflight-report — read the report and the chain check through the service.
+
+Under the service install the records live in /var/lib/agent-preflight, which
+the operator's uid cannot read; that is the point. The service runs the
+read-only report and chain verifier with fixed arguments and returns the text.
+
+  preflight-report            # summary, then chain verification
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+import preflight_client as client  # noqa: E402
+
+
+def main():
+    rc = 0
+    for kind in ("report", "verify"):
+        try:
+            r = client.ask(kind, "")
+        except (OSError, ValueError) as e:
+            print(f"preflight-report: gate service unreachable ({type(e).__name__})", file=sys.stderr)
+            return 2
+        sys.stdout.write(r.get("stdout", "") + ("\n" if kind == "report" else ""))
+        sys.stderr.write(r.get("stderr", ""))
+        rc = rc or int(r.get("exit", 0))
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())
