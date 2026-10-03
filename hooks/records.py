@@ -148,13 +148,57 @@ def build(phase, session_id, tool_name, tool_input, classification, outcome,
     }
 
 
+GENESIS = "genesis"
+
+
+def line_hash(raw):
+    """sha256 of one record line as stored, without its trailing newline."""
+    return hashlib.sha256(raw.rstrip(b"\n")).hexdigest()
+
+
+def _last_line(f):
+    """The last complete line of an open binary file, or b"" if empty."""
+    f.seek(0, os.SEEK_END)
+    end = f.tell()
+    if end == 0:
+        return b""
+    block, data, pos = 4096, b"", end
+    while pos > 0:
+        step = min(block, pos)
+        pos -= step
+        f.seek(pos)
+        data = f.read(step) + data
+        if data.rstrip(b"\n").count(b"\n") >= 1:
+            break
+    return data.rstrip(b"\n").rsplit(b"\n", 1)[-1]
+
+
 def write(rec, path=None):
-    """Append one record. Never raises."""
+    """Append one record, chained to the line before it. Never raises.
+
+    `chain` is the hash of the previous line exactly as stored, so editing,
+    inserting or deleting any record breaks the chain at the next one
+    (tools/verify_chain.py). It cannot detect truncation of the tail or a
+    wholesale rewrite with recomputed hashes; that needs the head anchored
+    somewhere the agent cannot rewrite (ARCHITECTURE D7).
+
+    The lock matters: the harness runs tool calls in parallel, and two hooks
+    that both read the same last line would fork the chain.
+    """
     try:
+        import fcntl
         _install_dir()
         target = Path(path) if path else RECORD_FILE
-        with target.open("a") as f:
-            f.write(json.dumps(rec, sort_keys=True) + "\n")
+        with target.open("a+b") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                last = _last_line(f)
+                rec = dict(rec, chain=line_hash(last) if last else GENESIS)
+                f.seek(0, os.SEEK_END)
+                f.write((json.dumps(rec, sort_keys=True) + "\n").encode())
+                f.flush()
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
         return True
-    except OSError:
+    except (OSError, ImportError):
         return False

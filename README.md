@@ -248,6 +248,12 @@ per-decision rows at all — grouped so that installs running different rule
 contracts or different message text are never silently pooled. Sharing is
 manual; nothing uploads anything.
 
+Each row carries the hash of the row before it, so editing, inserting or
+deleting a record breaks the chain at that point: `python3 tools/verify_chain.py`.
+The chain alone cannot see the last rows being removed or the whole file being
+rewritten with fresh hashes; that needs the head hash kept somewhere the agent
+cannot rewrite (`--head` prints it).
+
 A pre-intervention dataset from 162 days of the author's own use is committed
 at `data/before-2026-09-16.jsonl`, with its derivation in `tools/freeze_audit.py`.
 
