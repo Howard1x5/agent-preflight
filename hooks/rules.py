@@ -23,6 +23,8 @@ import re
 import shlex
 from pathlib import Path
 
+import authority  # noqa: E402  (same directory; hooks run with it on sys.path)
+
 RULES_DIR = Path.home() / ".claude" / "state" / "agent-preflight" / "rules"
 BUNDLED = Path(__file__).resolve().parent.parent / "rules" / "consult-backend.example.json"
 
@@ -45,7 +47,29 @@ def load_rule_file(path):
 
 
 def load_rule(rule_id="consult-backend"):
-    """Load a rule. Local config wins; the bundled example is the fallback."""
+    """Load a rule.
+
+    A root-owned system rule (D7) wins outright, and when one exists the user
+    rule is never consulted -- otherwise the agent, which can write the user
+    rule, could weaken enforcement by editing it. A system rule that fails the
+    ownership check is still used, with its mode forced to enforce: falling back
+    to the user rule there would hand authority back to the agent.
+
+    Without a system rule: local config wins; the bundled example is the fallback.
+    """
+    sys_p = authority.system_rule_path(rule_id)
+    if sys_p is not None:
+        try:
+            d = json.loads(sys_p.read_text())
+        except (OSError, ValueError):
+            d = json.loads(BUNDLED.read_text())
+            d["_untrusted"] = "unreadable system rule"
+        if not authority.trusted(sys_p):
+            d["_untrusted"] = "system rule is not root-owned"
+        if d.get("_untrusted"):
+            d["mode"] = "enforce"
+        d["_authority"] = "system"
+        return _compile(d)
     for candidate in (RULES_DIR / f"{rule_id}.json", BUNDLED):
         try:
             if candidate.exists():

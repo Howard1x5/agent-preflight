@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""preflight-admin — the operator's escape hatch under enforcement (ARCHITECTURE D7).
+
+  sudo preflight-admin dev --minutes 60 --reason "fixing the rule config"
+  preflight-admin status
+  sudo preflight-admin end
+
+`dev` and `end` require root. That is the whole point: the agent runs as the
+operator's uid without the operator's sudo password, so it cannot open the
+hatch. While an override is active every allowed call warns loudly and is
+recorded as `override-allow`, and the override expires on its own.
+"""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+import authority  # noqa: E402
+
+
+def need_root():
+    if os.geteuid() != 0:
+        print("preflight-admin: this needs root -- run it with sudo.", file=sys.stderr)
+        sys.exit(1)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="preflight-admin")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    dev = sub.add_parser("dev", help="suspend enforcement for a bounded time")
+    dev.add_argument("--minutes", type=int, required=True,
+                     help=f"1-{authority.MAX_OVERRIDE_MINUTES}")
+    dev.add_argument("--reason", required=True, help="recorded with every allow")
+    sub.add_parser("status", help="show whether an override is in force")
+    sub.add_parser("end", help="end the override now")
+    args = ap.parse_args()
+
+    if args.cmd == "status":
+        o = authority.active_override()
+        print(f"override ACTIVE until {o['until']} ({o['reason']}, by {o['by']})"
+              if o else "no override in force")
+        return 0
+
+    need_root()
+    if args.cmd == "end":
+        print("override ended" if authority.end_override() else "no override was in force")
+        return 0
+    try:
+        o = authority.write_override(args.minutes, args.reason)
+    except ValueError as e:
+        print(f"preflight-admin: {e}", file=sys.stderr)
+        return 1
+    print(f"override ACTIVE until {o['until']}. Every allowed call will warn and be recorded.")
+    print("End it early with: sudo preflight-admin end")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

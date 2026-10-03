@@ -174,6 +174,13 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    if not args.uninstall and (Path("/etc/agent-preflight") / "rules").exists():
+        print("install: a root-owned system install is present (/etc/agent-preflight).\n"
+              "User-level hooks on top of it would record every decision twice.\n"
+              "Manage it with: sudo python3 tools/install_system.py [--uninstall]",
+              file=sys.stderr)
+        return 1
+
     s = load_settings()
     mode = "enforce" if args.enforce else "rehearsal" if args.rehearsal else "observe"
     changes = plan_uninstall(s) if args.uninstall else plan_install(s, mode)

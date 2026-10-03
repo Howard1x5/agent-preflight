@@ -35,7 +35,7 @@ BUNDLE_VERSION = 1
 # Outcomes that mean the prerequisite was actually established.
 CONFIRMING = {"satisfies"}
 # Outcomes that mean it was not, while work proceeded anyway.
-UNENFORCED = {"degraded-allow"}
+UNENFORCED = {"degraded-allow", "override-allow"}
 
 # v1 (pre-intervention) records carry classification+verdict and no outcome,
 # because that version decided from the request and never observed a result.
@@ -167,7 +167,7 @@ def print_summary(s):
             print(f"  session {d['session']}   {d['dangling']} stuck   "
                   f"last seen {(d['last_seen'] or '?')[:16]}")
     if s["unenforced_allows"]:
-        print(f"UNENFORCED ALLOWS  {s['unenforced_allows']}   proceeded while degraded")
+        print(f"UNENFORCED ALLOWS  {s['unenforced_allows']}   proceeded while degraded or under admin override")
     if s["incomplete_records"]:
         print(f"INCOMPLETE         {s['incomplete_records']}   records flagged as gaps")
     if s["unparsable_lines"]:

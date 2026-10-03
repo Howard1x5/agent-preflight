@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import authority  # noqa: E402
 import records  # noqa: E402
 import rules as R  # noqa: E402
 
@@ -278,6 +279,17 @@ def block(msg, exit_code=2):
 # ===== Pre phase ===========================================================
 
 def handle_pre(session_id, tool_name, tool_input, tool_use_id):
+    if MODE == "enforce":
+        # D7: the operator's escape hatch. Only root can create it, it expires
+        # on its own, and every call it lets through is loud and recorded.
+        ov = authority.active_override()
+        if ov:
+            emit("pre", session_id, tool_name, tool_input, None, "override-allow",
+                 result={"until": ov.get("until")})
+            notify(f"PREFLIGHT ADMIN OVERRIDE until {ov.get('until')} "
+                   f"({ov.get('reason')}). Enforcement is NOT in effect.")
+            sys.exit(0)
+
     gate = gate_path(session_id)
     st = read_state(gate)
 
@@ -395,9 +407,10 @@ def receipt(session_id):
     unconfirmed = n.get("unconfirmed", 0)
     blocked = n.get("blocked", 0)
     degraded = n.get("degraded-allow", 0)
+    overridden = n.get("override-allow", 0)
     admitted = n.get("candidate-admitted", 0)
 
-    healthy = unconfirmed == 0 and degraded == 0 and incomplete == 0
+    healthy = unconfirmed == 0 and degraded == 0 and overridden == 0 and incomplete == 0
 
     if healthy:
         notify(f"preflight: {confirmed} confirmed consultation(s), "
@@ -418,6 +431,8 @@ def receipt(session_id):
     ]
     if degraded:
         out.append(f"  DEGRADED ALLOWS {degraded}   (enforcement was NOT in effect)")
+    if overridden:
+        out.append(f"  ADMIN OVERRIDE  {overridden}   (allowed under sudo override)")
     if incomplete:
         out.append(f"  INCOMPLETE      {incomplete}   (records missing — measurement gap)")
     if MODE == "rehearsal":

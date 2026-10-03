@@ -249,7 +249,9 @@ threshold must turn the metric into an alert. Storage is not follow-up.
 
 ## D7 — Separate the authority to change the control from the agent it controls
 
-**Decided 2026-10-02. Not yet implemented.**
+**Decided 2026-10-02. Rehearsal mode, root-owned enforce install and the
+sudo-only override implemented 2026-10-02; the dedicated-uid service (A–C) is
+not.**
 
 **Problem:** D1 accepted that "a user with local write access can disable it"
 and called the control a guardrail against agent behaviour, not a defence

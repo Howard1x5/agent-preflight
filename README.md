@@ -187,6 +187,34 @@ install.
 A wrapper that exists is not a wrapper that gets used: agents do not discover
 it on their own. See `docs/FINDINGS.md` F1 for the measurement and the response.
 
+### Enforcing for real: root-owned authority
+
+`tools/install.py` keeps everything in your own account, which is right for
+observe and rehearsal (`--rehearsal` shows the agent each block message without
+blocking). It is not right for enforcement: the agent runs as you, so it could
+edit the hook, unregister it, or flip the rule back to observe.
+
+```bash
+python3 tools/install.py --uninstall          # as yourself
+sudo python3 tools/install_system.py --dry-run
+sudo python3 tools/install_system.py
+```
+
+This copies the gate to `/opt/agent-preflight`, writes the rule (your current
+endpoints, `mode: enforce`) to `/etc/agent-preflight`, and registers the hooks
+in `/etc/claude-code/managed-settings.json`, which no user or project setting
+can override. The escape hatch needs your sudo password and expires on its own:
+
+```bash
+sudo preflight-admin dev --minutes 30 --reason "fixing the rule"
+preflight-admin status
+sudo preflight-admin end
+```
+
+Every call allowed under an override warns and is recorded. Records and gate
+state are still written in your home directory; see `docs/ARCHITECTURE.md` D7
+for that residual weakness and the plan to close it.
+
 ## Requirements
 
 An agent harness that exposes lifecycle hooks. Claude Code does
