@@ -198,6 +198,10 @@ def main():
         shutil.rmtree(OPT, ignore_errors=True)
         shutil.rmtree(authority.SYSTEM_RULES_DIR, ignore_errors=True)
         authority.end_override()
+        try:
+            authority.SYSTEM_DIR.rmdir()   # only if empty; never removes anything else
+        except OSError:
+            pass
         print("uninstalled. Records under ~/.claude/state/agent-preflight were left in place.\n"
               "To return to user-level observe mode: python3 tools/install.py")
         return 0

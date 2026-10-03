@@ -312,10 +312,20 @@ After C, defeating the control requires root. That is the boundary D5 says a
 hard control needs, and it is the first point at which "constrains an agent"
 holds when the agent shares the operator's uid.
 
-**To verify, not assume:** that sudo's credential cache is per-terminal on the
-target host, so an agent shell cannot reuse a password the operator typed
-elsewhere; and whether commands the operator runs with `!` in the prompt pass
-through `PreToolUse`.
+**To verify, not assume:**
+
+- *sudo's credential cache is per-terminal.* **Verified 2026-10-02** on the
+  maintainer's Ubuntu host: within minutes of the operator running `sudo` in
+  their own terminal, `sudo -n true` from the agent's shell returned "a password
+  is required". The agent cannot reuse the operator's sudo session there. This
+  is a property of the host's sudo configuration (`timestamp_type`), so it must
+  be re-checked on any other host.
+- *Whether commands the operator runs with `!` in the prompt pass through
+  `PreToolUse`.* Not yet verified.
+- *Full install/uninstall cycle on a real host.* **Verified 2026-10-02:** user
+  uninstall, system dry run, system install, system uninstall and user
+  reinstall all completed and left no system files behind. Enforcement under the
+  managed hooks has not yet been exercised in a live session.
 
 ---
 
