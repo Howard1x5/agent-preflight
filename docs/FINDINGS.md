@@ -82,6 +82,26 @@ call without terms gets its own message naming both forms.
 Limits: n = 1 session. The figures come from the session receipt and the
 transcript; the records themselves are in the service's directory.
 
+**Second result (2026-10-03, after the positional-terms fix, message version
+`4c34cd73`):** same install, a new fresh agent, the identical question.
+
+| # | agent's call | gate |
+|---|---|---|
+| 1 | `grep ... \| ls ... \| tail` inspecting settings | refused: compound |
+| 2 | read a settings file | refused: not yet consulted |
+| 3 | `preflight-query --query "..."` | admitted, confirmed |
+
+Refused calls before the first admitted query: **2** (4 in the first session,
+39 and 18 before the message change). No wrapper call was wasted: the first
+`preflight-query` call qualified. Neither refusal was a failed query; both were
+the agent orienting itself before it had tried to query at all, which is the
+cost of a turn that starts closed rather than a discovery failure.
+
+Not exercised: this agent used `--query` on its first attempt -- plausibly
+because the block message names it -- so the positional-terms path is covered
+only by tests and an operator-run check, not by a fresh agent. n = 2 live
+sessions, one operator, one model.
+
 **How this will be tested:** the report keeps message versions apart, so
 refused-before-first-admission under `8ed0b22c` can be compared directly with
 `f9e4ed8f` once enforce mode has run for long enough. If naming the wrapper does

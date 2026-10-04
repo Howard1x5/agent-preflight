@@ -332,8 +332,11 @@ holds when the agent shares the operator's uid.
   `PreToolUse`.* Not yet verified.
 - *Full install/uninstall cycle on a real host.* **Verified 2026-10-02:** user
   uninstall, system dry run, system install, system uninstall and user
-  reinstall all completed and left no system files behind. Enforcement under the
-  managed hooks has not yet been exercised in a live session.
+  reinstall all completed and left no system files behind.
+- *Live enforcement under managed hooks and the dedicated-uid service.*
+  **Exercised 2026-10-03** in two fresh-agent sessions: every tool call was
+  refused until a qualifying query, the query confirmed through the service,
+  and the session receipt reported `mode=enforce` (docs/FINDINGS.md F1).
 
 ---
 
