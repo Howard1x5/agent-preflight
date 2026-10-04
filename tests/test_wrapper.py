@@ -28,6 +28,9 @@ def c(cmd):
     ('preflight-query -q "deploys" --limit 3', "targeted"),
     ('preflight-query --query=deploys', "targeted"),
     ('/usr/local/bin/preflight-query --query "x"', "targeted"),
+    ('preflight-query "open brain gate hook blocking"', "targeted"),
+    ('preflight-query open brain gate', "targeted"),
+    ('preflight-query --limit 3 deploys', "targeted"),
 ])
 def test_wrapper_with_a_query_qualifies(cmd, expected):
     assert c(cmd) == expected
@@ -37,6 +40,9 @@ def test_wrapper_with_a_query_qualifies(cmd, expected):
     'preflight-query',
     'preflight-query --query ""',
     'preflight-query --limit 5',
+    'preflight-query --help',
+    'preflight-query --rule consult-backend --timeout 9',
+    'preflight-query -q ""',
 ])
 def test_wrapper_without_a_query_does_not_qualify(cmd):
     """The wrapper is a trusted path to the dependency, not a trusted
@@ -62,6 +68,11 @@ def test_wrapper_rejects_an_empty_query_at_runtime():
                        capture_output=True, text=True)
     assert p.returncode == 1
     assert "must not be empty" in p.stderr
+
+
+def test_wrapper_without_terms_is_refused_at_runtime():
+    p = subprocess.run([sys.executable, str(WRAPPER)], capture_output=True, text=True)
+    assert p.returncode == 1 and "must not be empty" in p.stderr
 
 
 def test_wrapper_reports_an_unknown_rule_rather_than_guessing():

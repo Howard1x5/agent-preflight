@@ -54,6 +54,34 @@ information it needed every time. The gate could interpret none of it.
    no endpoints, and only actions that perform a query are named (Incident 4).
    Message version `8ed0b22c`.
 
+**First result after the response (2026-10-03):** the first live enforce
+session under the root-owned, dedicated-uid install (message version
+`8ed0b22c`), with a fresh agent that had no part in building the control.
+The session receipt read `1 confirmed consultation, 4 blocked, mode=enforce`.
+From the operator-supplied transcript:
+
+| # | agent's call | gate |
+|---|---|---|
+| 1 | `ssh ... python` querying the database directly | refused: compound — message names `preflight-query` |
+| 2 | `preflight-query --help` | refused: no filtering |
+| 3 | `preflight-query "open brain gate hook blocking"` | refused: no filtering |
+| 4 | read the hook source to find the syntax | refused |
+| 5 | `preflight-query --query "..."` | admitted, confirmed |
+
+Refused calls before the first admitted query: **4**, against 39 and 18 under
+`f9e4ed8f`. The agent's first attempt was still the habitual compound query,
+so the finding stands: it did not discover the wrapper on its own. But it
+switched to the wrapper immediately after one message that named it.
+
+Calls 2–4 were not a discovery failure but a syntax failure: the agent was
+already using the wrapper and passed its terms positionally, which the
+wrapper rejected and the generic "no filtering" message did not explain.
+Response: the wrapper now accepts positional terms as the query, and a wrapper
+call without terms gets its own message naming both forms.
+
+Limits: n = 1 session. The figures come from the session receipt and the
+transcript; the records themselves are in the service's directory.
+
 **How this will be tested:** the report keeps message versions apart, so
 refused-before-first-admission under `8ed0b22c` can be compared directly with
 `f9e4ed8f` once enforce mode has run for long enough. If naming the wrapper does

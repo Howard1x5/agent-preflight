@@ -156,7 +156,8 @@ def test_no_classification_accepts_a_local_read():
         assert classify(tool, inp) is None, f"{tool} {inp} must not satisfy"
 
 
-ALL_MESSAGES = (gate.MSG_BLOCKED, gate.MSG_GENERIC, gate.MSG_COMPOUND, gate.MSG_RETRY)
+ALL_MESSAGES = (gate.MSG_BLOCKED, gate.MSG_GENERIC, gate.MSG_COMPOUND,
+                gate.MSG_WRAPPER_NO_TERMS, gate.MSG_RETRY)
 
 
 def test_messages_never_name_a_non_performing_action():

@@ -122,13 +122,36 @@ def parse_simple_command(cmd):
     return tokens
 
 
+# Wrapper options that take a value. Their values are not search terms, so
+# `preflight-query --limit 5` must not qualify by way of the "5".
+_WRAPPER_VALUE_OPTS = {"-q", "--query", "--limit", "--rule", "--timeout"}
+
+
 def _wrapper_has_query(argv):
-    """The wrapper qualifies only with a non-empty --query."""
-    for i, tok in enumerate(argv):
-        if tok in ("-q", "--query") and i + 1 < len(argv) and argv[i + 1].strip():
+    """The wrapper qualifies only when it carries search terms: a non-empty
+    --query, or plain positional terms, which the wrapper treats the same."""
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        if tok in ("-q", "--query"):
+            if i + 1 < len(argv) and argv[i + 1].strip():
+                return True
+            i += 2
+            continue
+        if tok.startswith("--query="):
+            if tok.split("=", 1)[1].strip():
+                return True
+            i += 1
+            continue
+        if tok in _WRAPPER_VALUE_OPTS:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        if tok.strip():
             return True
-        if tok.startswith("--query=") and tok.split("=", 1)[1].strip():
-            return True
+        i += 1
     return False
 
 

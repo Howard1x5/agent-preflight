@@ -18,7 +18,8 @@ into a one-line install.
 It resolves the endpoint from the same rule config the gate reads, so the two
 cannot disagree about what the dependency is.
 
-  preflight-query --query "deployment history" [--limit 5] [--rule consult-backend]
+  preflight-query deployment history [--limit 5] [--rule consult-backend]
+  preflight-query --query "deployment history"   (equivalent)
 
 Exit codes: 0 on a response, 1 on failure. Prints the raw JSON response, so
 the gate's PostToolUse confirmation sees the real result rather than a summary.
@@ -37,15 +38,21 @@ import rules as R  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser(prog="preflight-query")
-    ap.add_argument("-q", "--query", required=True,
+    ap.add_argument("terms", nargs="*",
                     help="search terms drawn from the user's request")
+    ap.add_argument("-q", "--query", default="",
+                    help="the same search terms, as an option")
     ap.add_argument("--limit", type=int, default=5)
     ap.add_argument("--rule", default="consult-backend")
     ap.add_argument("--timeout", type=float, default=15.0)
     args = ap.parse_args()
 
-    if not args.query.strip():
-        print("preflight-query: --query must not be empty", file=sys.stderr)
+    # Plain arguments and --query are the same thing. A fresh agent's first
+    # attempt was positional terms; refusing the obvious form cost it two
+    # blocked calls in the first live enforce session.
+    args.query = (args.query or " ".join(args.terms)).strip()
+    if not args.query:
+        print("preflight-query: search terms must not be empty", file=sys.stderr)
         return 1
 
     rule = R.load_rule(args.rule)

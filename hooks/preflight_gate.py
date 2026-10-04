@@ -127,6 +127,13 @@ MSG_COMPOUND = (
        "single simple command.")
 )
 
+MSG_WRAPPER_NO_TERMS = (
+    f"PREFLIGHT GATE: {WRAPPERS or 'the wrapper'} was run without search terms.\n\n"
+    "It counts only when it carries search terms drawn from what the user\n"
+    "asked -- passed as plain arguments or with --query. Running it bare, or\n"
+    "with only options such as --help or --limit, retrieves nothing specific."
+)
+
 MSG_RETRY = (
     "PREFLIGHT GATE: the backend query ran but did not confirm ({reason}).\n\n"
     "Consecutive failures: {n}. The dependency may be unreachable or returning\n"
@@ -134,7 +141,8 @@ MSG_RETRY = (
 )
 
 MESSAGE_VERSION = hashlib.sha256(
-    (MSG_BLOCKED + MSG_GENERIC + MSG_COMPOUND + MSG_RETRY).encode()).hexdigest()[:8]
+    (MSG_BLOCKED + MSG_GENERIC + MSG_COMPOUND + MSG_WRAPPER_NO_TERMS
+     + MSG_RETRY).encode()).hexdigest()[:8]
 
 RULE_CONFIG_HASH = hashlib.sha256(
     json.dumps({k: v for k, v in (RULE or {}).items() if not k.startswith("_")},
@@ -336,6 +344,10 @@ def handle_pre(session_id, tool_name, tool_input, tool_use_id):
     if classification == "generic":
         emit("pre", session_id, tool_name, tool_input, classification, "blocked",
              failures=failures)
+        argv = R.parse_simple_command((tool_input or {}).get("command", "")) \
+            if tool_name == "Bash" else None
+        if argv and argv[0].rsplit("/", 1)[-1] in (RULE or {}).get("_wrappers", ()):
+            block(MSG_WRAPPER_NO_TERMS)
         block(MSG_GENERIC)
 
     emit("pre", session_id, tool_name, tool_input, None, "blocked", failures=failures)

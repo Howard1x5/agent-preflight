@@ -350,3 +350,12 @@ def test_observe_shows_the_agent_nothing(home):
     seed(home)
     code, _, out = pre(home, "ls")
     assert code == 0 and not agent_context(out)
+
+
+def test_wrapper_without_terms_gets_the_specific_message(home):
+    """First live enforce session: `preflight-query --help` got the generic
+    "no filtering" message, which never says how the wrapper takes terms."""
+    seed(home)
+    code, err, _ = pre(home, "preflight-query --help")
+    assert code == 2
+    assert "without search terms" in err and "--query" in err and "plain arguments" in err
