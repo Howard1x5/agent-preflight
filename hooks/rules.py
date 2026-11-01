@@ -92,7 +92,19 @@ def _compile(d):
     d["_wrappers"] = set(d.get("wrapper_clients") or [])
     d["_endpoints"] = [e.lower() for e in (d.get("endpoints") or [])]
     d["_capture_paths"] = [p.lower() for p in (d.get("capture_paths") or [])]
+    d["_permitted"] = set(d.get("permitted_tools") or [])
+    d["_query_keys"] = list(d.get("mcp_query_keys") or ["query"])
     return d
+
+
+def _mcp_match(name, tools):
+    """An MCP tool name matches a configured name exactly, or as its final
+    `__`-separated segment (`mcp__<server>__search_brain` for `search_brain`).
+
+    Never by substring: configured as `search`, substring matching also claims
+    `WebSearch` and `smart_search`, so an unrelated call would satisfy the gate.
+    """
+    return any(name == t or name.endswith("__" + t) for t in tools)
 
 
 def parse_simple_command(cmd):
@@ -171,6 +183,8 @@ def classify(tool_name, tool_input, rule):
       "targeted"     -- addresses the configured dependency, with filtering
       "generic"      -- addresses it, no filtering
       "capture-only" -- writes to it; never satisfies a read requirement
+      "permitted"    -- configured harness plumbing (`permitted_tools`);
+                        allowed before satisfaction, never satisfies
       None           -- unrelated to this rule
 
     There is no classification for reading a local file. A local read cannot
@@ -212,17 +226,37 @@ def classify(tool_name, tool_input, rule):
         return "capture-only" if _is_capture(url, rule) else "targeted"
 
     name = tool_name or ""
-    if any(t in name for t in rule.get("mcp_search_tools", [])):
-        return "targeted" if str(tool_input.get("query", "")).strip() else "generic"
-    if any(t in name for t in rule.get("mcp_generic_tools", [])):
+    if _mcp_match(name, rule.get("mcp_search_tools", [])):
+        has_query = any(str(tool_input.get(k, "")).strip() for k in rule["_query_keys"])
+        return "targeted" if has_query else "generic"
+    if _mcp_match(name, rule.get("mcp_generic_tools", [])):
         return "generic"
-    if any(t in name for t in rule.get("mcp_capture_tools", [])):
+    if _mcp_match(name, rule.get("mcp_capture_tools", [])):
         return "capture-only"
+    if name in rule["_permitted"]:
+        # Harness plumbing the prerequisite itself depends on, e.g. a harness
+        # that defers MCP schemas until ToolSearch loads them: refusing it
+        # makes the configured search tool uncallable and the turn can never
+        # open. Permitted, never satisfying. Its own label so the records keep
+        # plumbing apart from writes to the dependency.
+        return "permitted"
 
     return None
 
 
-def confirms(tool_response, rule):
+def _mcp_text(tool_response):
+    """Text of an MCP result, which arrives as content blocks -- a bare list, or
+    a dict carrying `content` -- or already as a string."""
+    if isinstance(tool_response, str):
+        return tool_response
+    blocks = tool_response.get("content") if isinstance(tool_response, dict) \
+        else tool_response
+    if isinstance(blocks, list):
+        return "\n".join(str(b.get("text", "")) for b in blocks if isinstance(b, dict))
+    return ""
+
+
+def confirms(tool_response, rule, tool_name=None):
     """Does this result confirm a real consultation?
 
     Non-error, NOT non-empty: a filtered search correctly returning zero rows
@@ -233,13 +267,28 @@ def confirms(tool_response, rule):
     HTTP 200, no alert. So where the rule declares an expected response shape,
     the response must actually parse into it.
 
+    MCP results are judged by `mcp_expect_response`, not `expect_response`: a
+    backend's HTTP API and its MCP tools can answer in different shapes (one
+    JSON, the other prose), and holding the MCP tool to the HTTP shape fails
+    every genuine search.
+
     Returns (ok: bool, reason: str).
     """
     if tool_response is None:
         return False, "absent"
     if isinstance(tool_response, dict):
-        if tool_response.get("error") or tool_response.get("is_error"):
+        if tool_response.get("error") or tool_response.get("is_error") \
+                or tool_response.get("isError"):
             return False, "error"
+
+    if (tool_name or "").startswith("mcp__"):
+        expect = (rule or {}).get("mcp_expect_response") or {}
+        text = _mcp_text(tool_response)
+        for pat in expect.get("error_patterns") or []:
+            if re.search(pat, text):
+                return False, "error-text"
+        return True, "ok"
+
     text = tool_response if isinstance(tool_response, str) else \
         (tool_response.get("stdout") or tool_response.get("output") or "") \
         if isinstance(tool_response, dict) else ""

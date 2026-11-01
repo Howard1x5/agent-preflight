@@ -1,0 +1,53 @@
+{
+  "rule_id": "consult-backend",
+  "rule_kind": "consult-backend",
+  "description": "Consult claude-mem before acting on a turn.",
+  "_comment_mcp": "Full MCP tool names, matched exactly. Searching with a query satisfies; reading by ID or timeline without a search does not.",
+  "mcp_search_tools": [
+    "mcp__plugin_claude-mem_mcp-search__search",
+    "mcp__plugin_claude-mem_mcp-search__smart_search"
+  ],
+  "mcp_generic_tools": [
+    "mcp__plugin_claude-mem_mcp-search__timeline",
+    "mcp__plugin_claude-mem_mcp-search__get_observations",
+    "mcp__plugin_claude-mem_mcp-search__session_start_context"
+  ],
+  "mcp_capture_tools": [
+    "mcp__plugin_claude-mem_mcp-search__observation_add"
+  ],
+  "mcp_query_keys": [
+    "query"
+  ],
+  "_comment_mcp_expect": "claude-mem's MCP tools answer in prose, so only an error flag or an error pattern rejects a result.",
+  "mcp_expect_response": {
+    "error_patterns": []
+  },
+  "_comment_permitted": "Harness plumbing the search depends on. Claude Code defers MCP tool schemas until ToolSearch loads them; refusing it makes the search tool uncallable.",
+  "permitted_tools": [
+    "ToolSearch"
+  ],
+  "_comment_http": "The worker's HTTP API, for curl and the preflight-query wrapper. Search answers GET only.",
+  "clients": [
+    "curl"
+  ],
+  "wrapper_clients": [
+    "preflight-query"
+  ],
+  "endpoints": [
+    "127.0.0.1:37700",
+    "localhost:37700"
+  ],
+  "query_path": "/api/search",
+  "query_method": "GET",
+  "capture_paths": [],
+  "filter_evidence": [
+    "[?&]query=[^&\\s'\"]+"
+  ],
+  "expect_response": {
+    "format": "json",
+    "required_keys": [
+      "content"
+    ]
+  },
+  "degraded_after_consecutive_failures": 4
+}

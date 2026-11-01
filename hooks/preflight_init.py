@@ -31,13 +31,21 @@ def main():
     p = gate.gate_path(session_id)
     prior = gate.read_state(p) or {}
 
-    gate.write_state(p, {
+    st = {
         "state": "pending",
         "candidate_id": "",
         # Carried across the turn boundary on purpose.
         "failures": prior.get("failures", 0),
         "degraded": prior.get("degraded", False),
-    })
+    }
+    # A prompt can arrive while a query is still running: a message the user
+    # sends mid-turn fires this hook too. The new prompt resets the turn, so
+    # that query no longer counts -- it was chosen before the user said more.
+    # Its id is kept only so the post phase can record it as superseded
+    # rather than as an unexplained "observed".
+    if prior.get("state") == "candidate" and prior.get("candidate_id"):
+        st["superseded_id"] = prior["candidate_id"]
+    gate.write_state(p, st)
     sys.exit(0)
 
 

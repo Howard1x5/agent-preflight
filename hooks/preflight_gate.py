@@ -336,7 +336,7 @@ def handle_pre(session_id, tool_name, tool_input, tool_use_id):
              "candidate-admitted", failures=failures)
         sys.exit(0)
 
-    if classification == "capture-only":
+    if classification in ("capture-only", "permitted"):
         emit("pre", session_id, tool_name, tool_input, classification,
              "permitted-non-qualifying", failures=failures)
         sys.exit(0)
@@ -366,16 +366,20 @@ def handle_post(session_id, tool_name, tool_input, tool_response, tool_use_id):
         sys.exit(0)
 
     classification = R.classify(tool_name, tool_input, RULE)
-    if classification is None:
+    if classification in (None, "permitted"):
         sys.exit(0)
 
     is_candidate = (st.get("state") == "candidate"
                     and st.get("candidate_id") == (tool_use_id or ""))
-    ok, reason = R.confirms(tool_response, RULE)
+    ok, reason = R.confirms(tool_response, RULE, tool_name)
     failures = st.get("failures", 0)
 
     if not is_candidate:
-        emit("post", session_id, tool_name, tool_input, classification, "observed",
+        # Superseded: the query was the candidate, but a prompt arrived while
+        # it ran and reset the turn (see preflight_init). It does not satisfy.
+        superseded = bool(tool_use_id) and tool_use_id == st.get("superseded_id")
+        emit("post", session_id, tool_name, tool_input, classification,
+             "superseded" if superseded else "observed",
              result={"status": "ok" if ok else reason}, failures=failures)
         sys.exit(0)
 

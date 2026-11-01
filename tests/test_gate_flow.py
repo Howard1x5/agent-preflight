@@ -122,6 +122,49 @@ def test_zero_results_still_opens_the_gate(home):
     assert json.loads(p.read_text())["state"] == "satisfied"
 
 
+def new_prompt(env, session="s1"):
+    subprocess.run([sys.executable, str(GATE.parent / "preflight_init.py")],
+                   input=json.dumps({"hook_event_name": "UserPromptSubmit",
+                                     "session_id": session}),
+                   capture_output=True, text=True, env=env, check=True)
+
+
+def last_outcome(env):
+    f = Path(env["HOME"]) / ".claude" / "state" / "agent-preflight" / "decisions.jsonl"
+    return json.loads(f.read_text().splitlines()[-1])["outcome"]
+
+
+def test_prompt_mid_query_supersedes_it(home):
+    """A message sent mid-turn fires the turn-start hook while a query is still
+    running. The new prompt resets the turn, so that query must not satisfy --
+    and it is recorded as superseded, not as an unexplained "observed"
+    (seen live: the record read as a miss with nothing to say why)."""
+    p = seed(home)
+    pre(home, GOOD)
+    new_prompt(home)
+    post(home, GOOD, '{"results": []}')
+    assert json.loads(p.read_text())["state"] == "pending"
+    assert last_outcome(home) == "superseded"
+
+
+def test_unrelated_result_is_still_observed(home):
+    p = seed(home)
+    pre(home, GOOD, tuid="t1")
+    new_prompt(home)
+    post(home, GOOD, '{"results": []}', tuid="t2")
+    assert json.loads(p.read_text())["state"] == "pending"
+    assert last_outcome(home) == "observed"
+
+
+def test_query_after_the_new_prompt_satisfies(home):
+    p = seed(home)
+    pre(home, GOOD, tuid="t1")
+    new_prompt(home)
+    pre(home, GOOD, tuid="t2")
+    post(home, GOOD, '{"results": []}', tuid="t2")
+    assert json.loads(p.read_text())["state"] == "satisfied"
+
+
 def test_wellformed_failure_does_not_open_the_gate(home):
     """Incident 2: an exception handler returned a valid-looking default and
     the write succeeded, HTTP 200, no alert."""
