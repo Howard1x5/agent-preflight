@@ -101,3 +101,53 @@ def test_wrapper_does_not_leak_endpoints_on_failure(tmp_path):
     assert p.returncode == 1
     assert "secret-host.internal" not in p.stderr
     assert "9999" not in p.stderr
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_wrapper_speaks_the_configured_method(tmp_path, method):
+    """claude-mem's worker answers search on GET only; a POST-only wrapper
+    gets a 404 page and every wrapper query fails."""
+    import json
+    import os
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import parse_qs, urlparse
+
+    seen = {}
+
+    class H(BaseHTTPRequestHandler):
+        def _reply(self, query):
+            seen["method"], seen["query"] = self.command, query
+            body = json.dumps({"content": []}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            self._reply(parse_qs(urlparse(self.path).query).get("query", [""])[0])
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            self._reply(json.loads(self.rfile.read(n)).get("query", ""))
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.handle_request, daemon=True).start()
+    rules_dir = tmp_path / ".claude" / "state" / "agent-preflight" / "rules"
+    rules_dir.mkdir(parents=True)
+    (rules_dir / "t.json").write_text(json.dumps({
+        "rule_id": "t", "rule_kind": "consult-backend",
+        "wrapper_clients": ["preflight-query"], "filter_evidence": ["x"],
+        "endpoints": [f"127.0.0.1:{srv.server_port}"], "query_method": method,
+    }))
+    env = dict(os.environ, HOME=str(tmp_path))
+    p = subprocess.run([sys.executable, str(WRAPPER), "backup", "jobs",
+                        "--rule", "t", "--timeout", "5"],
+                       capture_output=True, text=True, env=env)
+    srv.server_close()
+    assert p.returncode == 0, p.stderr
+    assert seen == {"method": method, "query": "backup jobs"}
+    assert json.loads(p.stdout) == {"content": []}
