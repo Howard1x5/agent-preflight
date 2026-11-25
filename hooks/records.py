@@ -20,7 +20,7 @@ import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3  # 3: turn_seq (per-session turn counter; no content)
 
 STATE_DIR = Path.home() / ".claude" / "state" / "agent-preflight"
 RECORD_FILE = STATE_DIR / "decisions.jsonl"
@@ -127,13 +127,14 @@ def build(phase, session_id, tool_name, tool_input, classification, outcome,
           mode="enforce", rule_id="consult-backend", rule_kind="consult-backend",
           rule_config_hash="", message_version="", consecutive_failures=0,
           result=None, prompt="", rule_identifier_re=None, secret=None,
-          integrity=None):
+          integrity=None, turn_seq=None):
     return {
         "schema_version": SCHEMA_VERSION,
         "ts": datetime.now(timezone.utc).isoformat(),
         "phase": phase,                       # pre | post
         "mode": mode,                         # observe | enforce
         "session_hash": session_hash(session_id, secret),
+        "turn_seq": turn_seq,                 # nth user prompt in this session (None = unknown)
         "rule_id": rule_id,
         "rule_kind": rule_kind,
         "rule_config_hash": rule_config_hash,

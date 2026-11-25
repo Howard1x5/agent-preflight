@@ -178,6 +178,7 @@ def write_state(p: Path, st: dict):
 
 def emit(phase, session_id, tool_name, tool_input, classification, outcome,
          result=None, integrity=None, failures=0):
+    turn = (read_state(gate_path(session_id)) or {}).get("turn")
     rec = records.build(
         phase=phase, session_id=session_id, tool_name=tool_name,
         tool_input=tool_input, classification=classification, outcome=outcome,
@@ -185,7 +186,7 @@ def emit(phase, session_id, tool_name, tool_input, classification, outcome,
         rule_kind=(RULE or {}).get("rule_kind", "unknown"),
         rule_config_hash=RULE_CONFIG_HASH, message_version=MESSAGE_VERSION,
         consecutive_failures=failures, result=result,
-        rule_identifier_re=None, integrity=integrity,
+        rule_identifier_re=None, integrity=integrity, turn_seq=turn,
     )
     if not records.write(rec):
         print("preflight: decision record could not be written", file=sys.stderr)

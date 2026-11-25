@@ -37,6 +37,10 @@ def main():
         # Carried across the turn boundary on purpose.
         "failures": prior.get("failures", 0),
         "degraded": prior.get("degraded", False),
+        # Counts user prompts in this session so every decision can be
+        # grouped by turn. Without it, "how many turns would block" could
+        # only be rebuilt by joining against harness transcripts.
+        "turn": prior.get("turn", 0) + 1,
     }
     # A prompt can arrive while a query is still running: a message the user
     # sends mid-turn fires this hook too. The new prompt resets the turn, so

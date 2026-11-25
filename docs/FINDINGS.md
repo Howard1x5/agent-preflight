@@ -107,3 +107,74 @@ refused-before-first-admission under `8ed0b22c` can be compared directly with
 `f9e4ed8f` once enforce mode has run for long enough. If naming the wrapper does
 not move that number, the message is not the lever and the finding stands
 without a fix.
+
+## F2 — An advisory message on every call was heeded on 14% of turns
+
+**Claim:** in rehearsal mode the gate showed the agent the full block message
+on every tool call that would have been refused, and refused nothing. The
+agent satisfied the rule in about one turn in seven. Being told, every call,
+was not enough to change what it did. This is the project's premise measured
+on the project itself: an instruction is advisory; only the block is a control.
+
+**Setting:** rehearsal mode, the maintainer's own Claude Code sessions,
+2026-10-02 to 2026-11-25. Rule `consult-backend` (claude-mem backend), message
+versions `3240e7d0` (1,890 records), `4c34cd73` (147), `8ed0b22c` (55).
+2,070 records across 6 sessions. The operator's own instruction file also asked
+for a memory search before big decisions, so the agent had both the standing
+instruction and the per-call message.
+
+**What the records show** (joined to transcripts; see Limits):
+
+| measure | value |
+|---|---|
+| turns with at least one tool call | 233 |
+| turns that would have been refused at least once | 221 (95%) |
+| turns in which the agent satisfied the rule anyway | 32 (14%) |
+| would-be refusals per refused turn | median 4, max 79 |
+| first tool on refused turns | shell 171, other 17, write 16, mcp 10, read 6, fetch 1 |
+
+The median of 4 is a rehearsal artifact: nothing was refused, so nothing
+forced the query, and the count kept climbing through the turn. Under
+enforcement the expected cost is about one refusal and one query per turn.
+
+**Scoping does not rescue it for this operator.** Replaying the same period's
+turns (328 with tool calls) through the proposed "big decisions only" scope:
+
+| scope | share of turns it fires on |
+|---|---|
+| every turn (current) | 100% |
+| action triggers (ssh to own hosts, git push/publish, delete, config/memory writes) | 64% |
+| prompt triggers (planning, past-work references, project names, money/career, first turn, after compaction) | 50% |
+| either | 80% |
+| only state-changing commands on own hosts | roughly 40% (looser turn split; indicative) |
+
+773 of the 838 action-trigger calls were ssh to the operator's own machines.
+When the work *is* infrastructure, "big decision" is most turns.
+
+**Limits:**
+
+- The record schema had no turn id. Turns were rebuilt by joining records to
+  harness transcripts by session hash and timestamp (`tools/turn_join.py`);
+  4 of 6 sessions joined. Schema 3 adds `turn_seq` so this join is no longer
+  needed.
+- n = 1 operator, one agent model, one rule. The 14% includes turns where the
+  standing instruction, not the message, may have been the cause; the records
+  cannot separate the two.
+- Trigger matching was done with regular expressions over prompts and tool
+  inputs, locally. The prompt text is not in this repository and was never
+  written to disk.
+
+**Response (2026-11-25):**
+
+1. Enforce mode switched on for the operator's own sessions.
+2. Schema 3: every record carries `turn_seq`, the nth user prompt in the
+   session, counted by the turn-start hook alongside the carried-over failure
+   state (Incident 1). No content is recorded.
+3. `tools/turn_join.py` published so the rehearsal figures can be reproduced
+   from pre-schema-3 logs.
+
+**How this will be tested:** under enforcement, per turn: refusals before the
+first admitted query, share of turns that reach a confirmed query, and whether
+the operator switches back to rehearsal (the friction signal that matters most,
+because a control that gets switched off is no control). Compare against the
+rehearsal table above once there are as many enforced turns as rehearsed ones.
